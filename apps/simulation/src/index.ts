@@ -31,11 +31,11 @@ export const telemetrySchema = z.strictObject({
     .array(
       z.strictObject({
         id: z.enum(['drone-1', 'drone-2', 'drone-3']),
-        x: z.number().min(0).max(100),
-        y: z.number().min(0).max(100),
+        x: z.number().min(-1000).max(1000),
+        y: z.number().min(-1000).max(1000),
         speed: z.number().nonnegative(),
         battery: z.number().min(0).max(100),
-        connectionStatus: z.literal('CONNECTED'),
+        connectionStatus: z.enum(['CONNECTED', 'DISCONNECTED']),
       }),
     )
     .length(3),

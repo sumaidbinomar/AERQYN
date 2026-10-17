@@ -34,4 +34,38 @@ model Mission {
   createdAt   DateTime      @default(now()) @db.Timestamptz(3)
   settings    Json
   startedAt   DateTime?     @db.Timestamptz(3)
+  anomalyJobs AnomalyJob[]
+  alerts      Alert[]
+}
+
+model AnomalyJob {
+  id            String   @id @default(uuid()) @db.Uuid
+  missionId     String   @db.Uuid
+  mission       Mission  @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  startedAt     DateTime @db.Timestamptz(3)
+  payload       Json
+  createdAt     DateTime @default(now()) @db.Timestamptz(3)
+  nextPublishAt DateTime @default(now()) @db.Timestamptz(3)
+  processedAt   DateTime? @db.Timestamptz(3)
+  outcome       String?  @db.VarChar(20)
+  notifiedAt    DateTime? @db.Timestamptz(3)
+  alerts        Alert[]
+
+  @@index([processedAt, nextPublishAt])
+}
+
+model Alert {
+  id        String @id @default(uuid()) @db.Uuid
+  jobId     String @db.Uuid
+  job       AnomalyJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  missionId String @db.Uuid
+  mission   Mission @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  startedAt DateTime @db.Timestamptz(3)
+  droneId   String @db.VarChar(20)
+  type      String @db.VarChar(30)
+  message   String @db.VarChar(200)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@unique([jobId, droneId, type])
+  @@index([missionId, createdAt, id])
 }
