@@ -1,18 +1,25 @@
-import { z } from 'zod';
 import { createApp } from './app.js';
+import { configSchema } from './config.js';
+import { createDatabase } from './database.js';
 
-const config = z
-  .object({ API_PORT: z.coerce.number().int().min(1).max(65535).default(3000) })
-  .safeParse(process.env);
+const config = configSchema.safeParse(process.env);
 
 if (!config.success) {
-  console.error('Invalid API configuration', z.flattenError(config.error));
+  console.error(
+    'Invalid API configuration',
+    config.error.issues.map((issue) => issue.path.join('.')),
+  );
   process.exit(1);
 }
 
-const server = createApp().listen(config.data.API_PORT, '0.0.0.0', () => {
-  console.info(`API listening on port ${config.data.API_PORT}`);
-});
+const database = createDatabase(config.data.DATABASE_URL);
+const server = createApp(database).listen(
+  config.data.API_PORT,
+  '0.0.0.0',
+  () => {
+    console.info(`API listening on port ${config.data.API_PORT}`);
+  },
+);
 
 server.on('error', (error) => {
   console.error('API server failed', error);
@@ -21,7 +28,12 @@ server.on('error', (error) => {
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.once(signal, () => {
-    server.close(() => process.exit(0));
+    server.close(() => {
+      database
+        .$disconnect()
+        .then(() => process.exit(0))
+        .catch(() => process.exit(1));
+    });
     setTimeout(() => process.exit(1), 10_000).unref();
   });
 }

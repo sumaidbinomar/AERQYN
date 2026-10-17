@@ -63,7 +63,10 @@ async function waitFor(url, entry) {
 
 try {
   const apiPort = await freePort();
-  const api = start(['apps/api/dist/index.js'], { API_PORT: String(apiPort) });
+  const api = start(['apps/api/dist/index.js'], {
+    API_PORT: String(apiPort),
+    DATABASE_URL: 'postgresql://unused:unused@127.0.0.1:1/unused',
+  });
   const apiResponse = await waitFor(`http://127.0.0.1:${apiPort}/health`, api);
   assert.deepEqual(await apiResponse.json(), { status: 'ok', service: 'api' });
 
