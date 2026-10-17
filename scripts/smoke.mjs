@@ -130,6 +130,7 @@ try {
           ...process.env,
           DATABASE_URL: 'postgresql://unused:unused@127.0.0.1:1/unused',
           JWT_SECRET: 'smoke-only-secret-01234567890123456789',
+          RABBITMQ_URL: 'amqp://unused:unused@127.0.0.1:1',
           [variable]: 'invalid',
         },
         encoding: 'utf8',
@@ -139,6 +140,7 @@ try {
     );
     assert.equal(result.status, 1);
     assert.match(result.stderr, /Invalid .* configuration/);
+    assert.match(result.stderr, new RegExp(variable));
   }
   console.info(
     'Smoke checks passed: API, worker, web preview, API proxy, protected missions, and invalid port rejection.',
