@@ -7,6 +7,18 @@ datasource db {
   provider = "postgresql"
 }
 
+enum Role {
+  RESEARCHER
+  OBSERVER
+}
+
+model User {
+  id           String @id @default(uuid()) @db.Uuid
+  email        String @unique @db.VarChar(254)
+  passwordHash String
+  role         Role
+}
+
 enum MissionStatus {
   DRAFT
   RUNNING
