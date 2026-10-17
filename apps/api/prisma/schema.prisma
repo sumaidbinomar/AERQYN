@@ -15,10 +15,10 @@ enum MissionStatus {
 }
 
 model Mission {
-  id         String        @id @default(uuid()) @db.Uuid
-  name       String        @db.VarChar(100)
+  id          String        @id @default(uuid()) @db.Uuid
+  name        String        @db.VarChar(100)
   description String       @default("") @db.VarChar(2000)
-  status     MissionStatus @default(DRAFT)
-  createdAt  DateTime      @default(now()) @db.Timestamptz(3)
-  settings   Json
+  status      MissionStatus @default(DRAFT)
+  createdAt   DateTime      @default(now()) @db.Timestamptz(3)
+  settings    Json
 }

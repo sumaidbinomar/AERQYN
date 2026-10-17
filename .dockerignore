@@ -1,6 +1,7 @@
 node_modules
 **/node_modules
 **/dist
+apps/api/src/generated
 coverage
 .git
 .env

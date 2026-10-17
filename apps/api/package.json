@@ -9,6 +9,7 @@
     "db:dev": "node --env-file-if-exists=../../.env ../../node_modules/prisma/build/index.js migrate dev",
     "prebuild": "npm run db:generate",
     "pretypecheck": "npm run db:generate",
+    "predev": "npm run db:generate",
     "dev": "node --env-file-if-exists=../../.env --import tsx --watch src/index.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
