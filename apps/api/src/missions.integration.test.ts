@@ -258,11 +258,13 @@ describe.skipIf(process.env.AERQYN_INTEGRATION !== '1')(
         options: `-c search_path=${schema}`,
       });
       const queue = `aerqyn.test.${randomUUID()}`;
+      const record = vi.fn(async () => {});
       let pipeline = createAnomalyPipeline(
         pool,
         redis,
         process.env.RABBITMQ_URL,
         queue,
+        record,
       );
       const broker = await connectRabbit(process.env.RABBITMQ_URL);
       const brokerChannel = await broker.createConfirmChannel();
@@ -380,16 +382,20 @@ describe.skipIf(process.env.AERQYN_INTEGRATION !== '1')(
           redis,
           process.env.RABBITMQ_URL,
           queue,
+          record,
         );
         await pipeline.pump();
         await vi.waitFor(
           () => {
             expect(received[0]).toHaveLength(3);
             expect(received[1]).toHaveLength(3);
+            // Alerts and telemetry use separate Redis subscriptions; wait for both.
+            expect(frames).toHaveLength(3);
           },
           { timeout: 5000 },
         );
         expect(received[2]).toHaveLength(0);
+        expect(record.mock.calls).toHaveLength(6);
         expect(frames).toHaveLength(3);
         expect(
           frames.some(
@@ -618,7 +624,8 @@ describe.skipIf(process.env.AERQYN_INTEGRATION !== '1')(
         expect(
           (await observer.get(`/missions/${id}/viewers`)).body.data.count,
         ).toBe(2);
-        await tick(pool, redis, new Date(+start + 250));
+        const record = vi.fn(async () => {});
+        await tick(pool, redis, new Date(+start + 250), record);
         await vi.waitFor(() => {
           expect(events[0]).toHaveLength(1);
           expect(events[1]).toHaveLength(1);
@@ -633,8 +640,13 @@ describe.skipIf(process.env.AERQYN_INTEGRATION !== '1')(
         expect(
           (await observer.get(`/missions/${id}/telemetry`)).body.data,
         ).toEqual(events[0]![0]);
-        await tick(pool, redis, new Date(+start + 250));
-        await tick(pool, redis, new Date(+start + 350));
+        await tick(pool, redis, new Date(+start + 250), record);
+        await tick(pool, redis, new Date(+start + 350), record);
+        expect(record).toHaveBeenCalledTimes(1);
+        expect(record).toHaveBeenCalledWith({
+          type: 'telemetry.snapshot',
+          data: events[0]![0],
+        });
         await vi.waitFor(() => expect(events[0]).toHaveLength(2));
         expect(events[0]![1]!.elapsedMs).toBe(300);
         // Repeated ticks in the same sampling bucket do not duplicate recordings.

@@ -9,6 +9,7 @@ import {
   analysisSchema,
   detectAnomalies,
 } from '@aerqyn/simulation/anomalies';
+import { ignoreEvent, type RecordEvent } from './journal.js';
 
 export const rabbitUrlSchema = z
   .url()
@@ -91,7 +92,11 @@ export async function analyzeJob(pool: Pool, jobId: string) {
   }
 }
 
-export async function notifyAlerts(pool: Pool, redis: Redis) {
+export async function notifyAlerts(
+  pool: Pool,
+  redis: Redis,
+  record: RecordEvent = ignoreEvent,
+) {
   const jobs = await pool.query<{
     id: string;
     missionId: string;
@@ -114,6 +119,7 @@ export async function notifyAlerts(pool: Pool, redis: Redis) {
     ) {
       // Anomaly samples retain their original timestamp; never replace the latest normal cache with an older frame.
       const { observed } = analysisSchema.parse(job.payload);
+      await record({ type: 'anomaly.sample', data: observed });
       await redis.publish(telemetryChannel, JSON.stringify(observed));
       const alerts = await pool.query<{
         id: string;
@@ -133,6 +139,7 @@ export async function notifyAlerts(pool: Pool, redis: Redis) {
           startedAt: alert.startedAt.toISOString(),
           createdAt: alert.createdAt.toISOString(),
         });
+        await record({ type: 'alert.detected', data: event });
         await redis.publish(alertChannel, JSON.stringify(event));
       }
     }
@@ -148,6 +155,7 @@ export function createAnomalyPipeline(
   redis: Redis,
   url: string,
   queue = 'aerqyn.anomaly-analysis',
+  record: RecordEvent = ignoreEvent,
 ) {
   let connection: ChannelModel | undefined;
   let channel: ConfirmChannel | undefined;
@@ -230,7 +238,7 @@ export function createAnomalyPipeline(
   }
   return {
     async pump() {
-      await notifyAlerts(pool, redis);
+      await notifyAlerts(pool, redis, record);
       await ensureConnection();
       const producer = channel;
       if (!producer) return;

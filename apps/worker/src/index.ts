@@ -4,6 +4,7 @@ import pg from 'pg';
 import { connectRedis, redisUrlSchema } from '@aerqyn/simulation';
 import { tick } from './simulator.js';
 import { createAnomalyPipeline, rabbitUrlSchema } from './anomalies.js';
+import { createJournal } from './journal.js';
 
 const config = z
   .object({
@@ -15,6 +16,7 @@ const config = z
       ),
     REDIS_URL: redisUrlSchema.default('redis://127.0.0.1:6379'),
     RABBITMQ_URL: rabbitUrlSchema,
+    EVENT_LOG_DIR: z.string().trim().min(1).default('.cache/events'),
   })
   .safeParse(process.env);
 
@@ -22,6 +24,16 @@ if (!config.success) {
   console.error(
     'Invalid worker configuration',
     config.error.issues.map((issue) => issue.path.join('.')),
+  );
+  process.exit(1);
+}
+
+const journal = createJournal(config.data.EVENT_LOG_DIR);
+try {
+  await journal.record({ type: 'worker.started' });
+} catch {
+  console.error(
+    'Worker event journal unavailable; check EVENT_LOG_DIR permissions',
   );
   process.exit(1);
 }
@@ -37,7 +49,13 @@ const pool = new pg.Pool({
 });
 pool.on('error', () => console.error('Worker database connection unavailable'));
 const redis = connectRedis(config.data.REDIS_URL);
-const anomalies = createAnomalyPipeline(pool, redis, config.data.RABBITMQ_URL);
+const anomalies = createAnomalyPipeline(
+  pool,
+  redis,
+  config.data.RABBITMQ_URL,
+  undefined,
+  journal.record,
+);
 void redis
   .connect()
   .catch(() => console.error('Worker Redis startup unavailable'));
@@ -48,7 +66,7 @@ function schedule() {
   pending = (async () => {
     if (redis.isReady) {
       try {
-        await tick(pool, redis);
+        await tick(pool, redis, new Date(), journal.record);
         if (Date.now() >= nextAnalysis) {
           nextAnalysis = Date.now() + 1000;
           await anomalies.pump();
@@ -93,6 +111,7 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
       void pending
         .then(async () => {
           await anomalies.close();
+          await journal.flush();
           redis.destroy();
           await pool.end();
           process.exit(0);

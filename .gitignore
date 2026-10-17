@@ -6,6 +6,7 @@ coverage/
 .env.*
 !.env.example
 *.log
+*.jsonl
 *.tsbuildinfo
 .cache/
 .npm-cache/

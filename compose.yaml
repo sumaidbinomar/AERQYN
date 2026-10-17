@@ -94,9 +94,12 @@ services:
     init: true
     environment:
       WORKER_PORT: '3001'
+      EVENT_LOG_DIR: /var/log/aerqyn
       RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
       REDIS_URL: redis://redis:6379
+    volumes:
+      - event_logs:/var/log/aerqyn
     networks: [backend]
     depends_on:
       postgres: { condition: service_healthy }
@@ -148,3 +151,4 @@ volumes:
   postgres_data:
   redis_data:
   rabbitmq_data:
+  event_logs:

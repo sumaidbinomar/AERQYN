@@ -18,6 +18,7 @@ EXPOSE 3000
 CMD ["sh", "-c", "npm run db:migrate --workspace @aerqyn/api && exec node apps/api/dist/index.js"]
 
 FROM build AS worker
+RUN mkdir -p /var/log/aerqyn && chown node:node /var/log/aerqyn
 USER node
 EXPOSE 3001
 CMD ["node", "apps/worker/dist/index.js"]
