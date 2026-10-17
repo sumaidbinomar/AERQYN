@@ -1,13 +1,11 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import type { PrismaClient } from './generated/prisma/client.js';
+import { Prisma } from './generated/prisma/client.js';
 import { ApiError } from './errors.js';
 import { requireRole } from './auth.js';
+import { settingsSchema } from '@aerqyn/simulation';
 
-const settingsSchema = z.strictObject({
-  durationSeconds: z.number().int().min(10).max(3600).default(300),
-  telemetryIntervalMs: z.number().int().min(100).max(5000).default(1000),
-});
 const createSchema = z.strictObject({
   name: z.string().trim().min(1).max(100),
   description: z.string().trim().max(2000).default(''),
@@ -71,16 +69,30 @@ export function missionRoutes(database: PrismaClient) {
   router.patch('/:id', requireRole('RESEARCHER'), async (request, response) => {
     const id = parse(idSchema, request.params.id);
     const data = parse(updateSchema, request.body);
-    const mission = await database.mission.update({
-      where: { id },
-      data: {
-        ...(data.name !== undefined ? { name: data.name } : {}),
-        ...(data.description !== undefined
-          ? { description: data.description }
-          : {}),
-        ...(data.settings !== undefined ? { settings: data.settings } : {}),
-      },
-    });
+    const mission = await database.mission
+      .update({
+        where: { id, status: { not: 'RUNNING' } },
+        data: {
+          ...(data.name !== undefined ? { name: data.name } : {}),
+          ...(data.description !== undefined
+            ? { description: data.description }
+            : {}),
+          ...(data.settings !== undefined ? { settings: data.settings } : {}),
+        },
+      })
+      .catch(async (error) => {
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === 'P2025' &&
+          (await database.mission.findUnique({ where: { id } }))
+        )
+          throw new ApiError(
+            409,
+            'INVALID_STATE',
+            'Stop the mission before editing it',
+          );
+        throw error;
+      });
     response.json({ data: mission });
   });
   router.delete(
@@ -88,7 +100,21 @@ export function missionRoutes(database: PrismaClient) {
     requireRole('RESEARCHER'),
     async (request, response) => {
       const id = parse(idSchema, request.params.id);
-      await database.mission.delete({ where: { id } });
+      await database.mission
+        .delete({ where: { id, status: { not: 'RUNNING' } } })
+        .catch(async (error) => {
+          if (
+            error instanceof Prisma.PrismaClientKnownRequestError &&
+            error.code === 'P2025' &&
+            (await database.mission.findUnique({ where: { id } }))
+          )
+            throw new ApiError(
+              409,
+              'INVALID_STATE',
+              'Stop the mission before deleting it',
+            );
+          throw error;
+        });
       response.status(204).end();
     },
   );

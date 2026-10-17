@@ -1,18 +1,59 @@
 import { createServer } from 'node:http';
 import { z } from 'zod';
+import pg from 'pg';
+import { connectRedis, redisUrlSchema } from '@aerqyn/simulation';
+import { tick } from './simulator.js';
 
 const config = z
   .object({
     WORKER_PORT: z.coerce.number().int().min(1).max(65535).default(3001),
+    DATABASE_URL: z
+      .url()
+      .refine((value) =>
+        ['postgres:', 'postgresql:'].includes(new URL(value).protocol),
+      ),
+    REDIS_URL: redisUrlSchema.default('redis://127.0.0.1:6379'),
   })
   .safeParse(process.env);
 
 if (!config.success) {
-  console.error('Invalid worker configuration', z.flattenError(config.error));
+  console.error(
+    'Invalid worker configuration',
+    config.error.issues.map((issue) => issue.path.join('.')),
+  );
   process.exit(1);
 }
 
-// A liveness endpoint keeps the scaffold running without inventing background jobs.
+const url = new URL(config.data.DATABASE_URL);
+const schema = url.searchParams.get('schema') ?? 'public';
+if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(schema))
+  throw new Error('Invalid database schema');
+const pool = new pg.Pool({
+  connectionString: url.href,
+  connectionTimeoutMillis: 3000,
+  options: `-c search_path=${schema}`,
+});
+pool.on('error', () => console.error('Worker database connection unavailable'));
+const redis = connectRedis(config.data.REDIS_URL);
+void redis
+  .connect()
+  .catch(() => console.error('Worker Redis startup unavailable'));
+let stopping = false;
+let pending = Promise.resolve();
+function schedule() {
+  pending = (async () => {
+    if (redis.isReady) {
+      try {
+        await tick(pool, redis);
+      } catch {
+        console.error('Simulation tick failed; retrying');
+      }
+    }
+    if (!stopping) timer = setTimeout(schedule, 100);
+  })();
+}
+let timer = setTimeout(schedule, 100);
+
 const server = createServer((request, response) => {
   response.setHeader('Content-Type', 'application/json');
   if (request.method === 'GET' && request.url === '/health') {
@@ -28,7 +69,7 @@ const server = createServer((request, response) => {
 });
 
 server.listen(config.data.WORKER_PORT, '0.0.0.0', () => {
-  console.info(`Worker scaffold listening on port ${config.data.WORKER_PORT}`);
+  console.info(`Worker listening on port ${config.data.WORKER_PORT}`);
 });
 
 server.on('error', (error) => {
@@ -38,7 +79,17 @@ server.on('error', (error) => {
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.once(signal, () => {
-    server.close(() => process.exit(0));
+    stopping = true;
+    clearTimeout(timer);
+    server.close(() => {
+      void pending
+        .then(async () => {
+          redis.destroy();
+          await pool.end();
+          process.exit(0);
+        })
+        .catch(() => process.exit(1));
+    });
     setTimeout(() => process.exit(1), 10_000).unref();
   });
 }

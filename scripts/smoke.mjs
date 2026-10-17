@@ -78,6 +78,7 @@ try {
   const workerPort = await freePort();
   const worker = start(['apps/worker/dist/index.js'], {
     WORKER_PORT: String(workerPort),
+    DATABASE_URL: 'postgresql://unused:unused@127.0.0.1:1/unused',
   });
   const workerUrl = `http://127.0.0.1:${workerPort}`;
   assert.deepEqual(

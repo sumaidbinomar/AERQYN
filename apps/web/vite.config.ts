@@ -18,6 +18,7 @@ export default defineConfig(({ mode }) => {
     })
     .parse(loadEnv(mode, envDir, ''));
   const proxy = {
+    '/socket.io': { target: env.API_PROXY_TARGET, ws: true },
     '/api': {
       target: env.API_PROXY_TARGET,
       rewrite: (path: string) => path.replace(/^\/api/, ''),

@@ -89,19 +89,10 @@ export function createAuth(database: PrismaClient, secret: string) {
     });
   });
 
-  const authenticate: RequestHandler = async (request, response, next) => {
-    const match = /^Bearer ([^\s]+)$/i.exec(
-      request.headers.authorization ?? '',
-    );
-    if (!match)
-      throw new ApiError(
-        401,
-        'UNAUTHORIZED',
-        'A valid Bearer token is required',
-      );
+  async function verifyToken(token: string) {
     let userId: string;
     try {
-      const { payload } = await jwtVerify(match[1]!, key, {
+      const { payload } = await jwtVerify(token, key, {
         algorithms: ['HS256'],
         issuer,
         audience,
@@ -127,10 +118,22 @@ export function createAuth(database: PrismaClient, secret: string) {
         'UNAUTHORIZED',
         'A valid Bearer token is required',
       );
-    response.locals.user = user;
+    return user;
+  }
+  const authenticate: RequestHandler = async (request, response, next) => {
+    const match = /^Bearer ([^\s]+)$/i.exec(
+      request.headers.authorization ?? '',
+    );
+    if (!match)
+      throw new ApiError(
+        401,
+        'UNAUTHORIZED',
+        'A valid Bearer token is required',
+      );
+    response.locals.user = await verifyToken(match[1]!);
     next();
   };
-  return { router, authenticate };
+  return { router, authenticate, verifyToken };
 }
 
 export function requireRole(role: Role): RequestHandler {

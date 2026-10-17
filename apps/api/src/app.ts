@@ -3,8 +3,14 @@ import type { PrismaClient } from './generated/prisma/client.js';
 import { errorHandler } from './errors.js';
 import { missionRoutes } from './missions.js';
 import { createAuth } from './auth.js';
+import { simulationRoutes } from './simulation.js';
+import type { Redis } from '@aerqyn/simulation';
 
-export function createApp(database: PrismaClient, jwtSecret: string) {
+export function createApp(
+  database: PrismaClient,
+  jwtSecret: string,
+  redis?: Redis,
+) {
   const app = express();
   const auth = createAuth(database, jwtSecret);
   app.disable('x-powered-by');
@@ -15,7 +21,12 @@ export function createApp(database: PrismaClient, jwtSecret: string) {
 
   app.use(express.json({ limit: '16kb' }));
   app.use('/auth', auth.router);
-  app.use('/missions', auth.authenticate, missionRoutes(database));
+  app.use(
+    '/missions',
+    auth.authenticate,
+    simulationRoutes(database, redis),
+    missionRoutes(database),
+  );
 
   app.use((_request, response) => {
     response
