@@ -89,11 +89,24 @@ Verification on 2026-10-17:
 
 ## M4 — RabbitMQ and Anomaly Detection
 
-- [ ] Set up RabbitMQ producer and consumer
-- [ ] Implement GPS, battery and communication anomaly injection
-- [ ] Add rule-based anomaly detection
-- [ ] Persist alerts
-- [ ] Broadcast alerts in real time
+- [x] Set up RabbitMQ producer and consumer
+- [x] Implement GPS, battery and communication anomaly injection
+- [x] Add rule-based anomaly detection
+- [x] Persist alerts
+- [x] Broadcast alerts in real time
+
+Verification on 2026-10-17:
+
+- Added Researcher-only POST `/missions/:id/anomalies` with strict Zod validation, running/duration checks and a limit of 100 pending jobs per mission. Both roles can read paginated GET `/missions/:id/alerts`. Mission row locks serialize command acceptance with lifecycle changes. HTTP 202 means a job was saved, independently of broker availability.
+- Added an `AnomalyJob` database outbox and persisted `Alert` records with a committed SQL migration. The worker publishes persistent UUID-only jobs to a durable RabbitMQ queue with confirmations, consumes with prefetch 1 and manual acknowledgements, and dead-letters invalid envelopes. Pending database jobs retry after five seconds; broker reconnection/confirmation waits are bounded. Processing commits alerts and job outcomes atomically; duplicate deliveries cannot duplicate alerts.
+- Synthetic single-sample injections change GPS X by 100 field units, reduce battery by 40 percentage points, or report disconnected communication. Detection compares baseline and observed measurements using displacement, battery-loss and connection-transition rules. Normal deterministic simulation continues unchanged on subsequent ticks. Old-run jobs become stale; malformed stored payloads terminate as invalid.
+- The worker publishes committed alerts and modified samples through Redis. Socket.IO validates the mission run and current authentication before delivery to mission rooms. Durable notification state survives worker restarts; Redis delivery remains transient and may repeat after a crash. Anomaly samples retain their measurement timestamp, may arrive after newer normal frames, and do not overwrite the latest normal cache. Persisted alert history covers all mission runs; mission deletion cascades to jobs/alerts.
+- `npm run check` passed: lint, formatting, strict application/test TypeScript checks, 85 tests, and all four workspace builds. Five integration tests are explicitly skipped in the default suite. After tightening the smoke test's invalid-port assertion, lint/typecheck/the 85 tests and compiled smoke passed again.
+- `npm run test:integration` passed all five tests against real PostgreSQL, Redis and RabbitMQ in an isolated random schema and queue. M4 coverage includes all three anomaly samples, Researcher/Observer live delivery, room isolation, persisted/paginated history, duplicate/concurrent processing, broker-unavailable acceptance, worker restart before notification, malformed-envelope dead-lettering, invalid stored payloads, and stale-run rejection. The schema, queues, test missions/users and Redis keys were cleaned up.
+- `docker compose config --quiet` and full Compose build/start passed; all six containers became healthy. Prisma reports all four migrations applied, and database/schema comparison reports no difference. Worker logs show normal startup without connection errors.
+- `npm run smoke` passed compiled API/worker/web liveness, proxy, protected routes and invalid-port rejection. Expanded `npm run smoke:simulation` passed against the actual Docker API/worker through the web proxy with WebSocket and polling clients: RBAC, movement, cache, all three anomaly types, durable/live alerts, room isolation, stop/restart/completion and viewer cleanup. Temporary missions and their jobs/alerts were deleted; cached normal frames expire naturally.
+- README documents setup, API/event contracts, files, data flow, rule thresholds, outbox/idempotency concepts, testing and limitations. Notifications can be missed or repeated; clients should deduplicate alert IDs and fetch history after reconnect. Stopped/restarted missions suppress unsent live events. Jobs/alerts have no automatic retention policy; dead letters need manual inspection. Health remains liveness only, and the stack targets one local API/worker. No dashboard, replay or JSONL logging was added.
+- Local implementation commits: `d92cb48` (rules/schema), `3a88066` (API, queue pipeline and integration/live tests), and `9eb7d9c` (smoke-test verification). Completion documentation is saved in its own local commit. No pushes were made. M4 is complete; the Docker stack is left running. Wait for approval before starting M5.
 
 ## M5 — Frontend
 

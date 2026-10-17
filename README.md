@@ -2,7 +2,7 @@
 
 A backend-focused UAV digital twin and cybersecurity simulation project. All simulation data is synthetic and local; this project never controls physical drones.
 
-**M0 through M3 (Drone Simulation and WebSockets)** are implemented. [PROJECT.md](PROJECT.md) defines the product, [TASKS.md](TASKS.md) tracks milestones, and [AGENTS.md](AGENTS.md) defines development rules.
+**M0 through M4 (RabbitMQ and Anomaly Detection)** are implemented. [PROJECT.md](PROJECT.md) defines the product, [TASKS.md](TASKS.md) tracks milestones, and [AGENTS.md](AGENTS.md) defines development rules.
 
 ## Repository
 
@@ -10,7 +10,7 @@ A backend-focused UAV digital twin and cybersecurity simulation project. All sim
 apps/
   web/       React + Vite + Tailwind placeholder
   api/       Express JWT/RBAC, mission CRUD, Zod and Prisma/PostgreSQL
-  worker/    Deterministic simulator with GET /health
+  worker/    Deterministic simulator, RabbitMQ producer/consumer and GET /health
   simulation/ Shared telemetry schemas, Redis helpers and route calculations
 scripts/     Smoke verification for built processes
 compose.yaml PostgreSQL, Redis, RabbitMQ and three app services
@@ -54,7 +54,7 @@ npm run dev:web
 
 Open <http://localhost:5173>. The placeholder has no dashboard or application controls. API liveness is available at <http://localhost:3000/health>; worker liveness is at <http://localhost:3001/health> when running on the host. The web proxy makes <http://localhost:5173/api/health> reach the API without requiring CORS.
 
-Backend scripts load the root `.env`; Vite loads it using `envDir`. If changing `API_PORT`, also change `API_PROXY_TARGET` to match. Environment variables already set in the terminal take precedence. Set `DATABASE_URL` to match your database username, password, host port and database name; URL-encode credentials. Set `REDIS_URL` for both backend services (default `redis://127.0.0.1:6379`); change it too if changing `REDIS_PORT`. Compose uses internal database and Redis URLs. The API validates its database URL, Redis URL and `JWT_SECRET` at startup. RabbitMQ clients remain M4. API development, type checking and builds automatically generate the Prisma client.
+Backend scripts load the root `.env`; Vite loads it using `envDir`. If changing `API_PORT`, also change `API_PROXY_TARGET` to match. Environment variables already set in the terminal take precedence. Set `DATABASE_URL` to match your database username, password, host port and database name; URL-encode credentials. Set `REDIS_URL` for both backend services (default `redis://127.0.0.1:6379`); change it too if changing `REDIS_PORT`. The worker requires `RABBITMQ_URL` with your broker username, URL-encoded password and host port, for example `amqp://aerqyn:your_password@127.0.0.1:5672`. Compose supplies internal database, Redis and broker URLs. The API validates its database URL, Redis URL and `JWT_SECRET` at startup. API development, type checking and builds automatically generate the Prisma client.
 
 ## Full Docker setup
 
@@ -96,11 +96,11 @@ npm run smoke
 
 `check` runs ESLint, formatting, strict TypeScript checks, Vitest/Supertest tests and all four workspace builds. `smoke` requires those builds, starts all three application processes on temporary ports, checks API and worker health, checks web HTML and the web-to-API proxy, verifies unauthenticated missions return 401 directly and through the proxy, rejects invalid backend port settings, then stops its child processes. It does not verify Docker or infrastructure.
 
-`test:integration` requires PostgreSQL, Redis and the root `.env` database URL. It creates a randomly named `m2_test_*` schema, applies the real migrations, and verifies authentication, CRUD, roles, lifecycle races, actual worker ticks, Redis caching, Socket.IO room isolation and viewer cleanup. It drops that schema and its mission-specific Redis keys afterward; it never deletes development missions. The database user needs schema creation permission. The standard test run skips this integration suite explicitly. An interrupted run may leave test data behind.
+`test:integration` requires PostgreSQL, Redis, RabbitMQ and the root `.env` database/Redis/broker URLs. It creates a randomly named `m2_test_*` schema, applies the real migrations, and verifies authentication, CRUD, roles, lifecycle races, actual worker ticks, Redis caching, Socket.IO room isolation and viewer cleanup. M4 also verifies the real RabbitMQ pipeline, anomaly samples, persistent alerts, duplicate delivery, broker unavailability, worker restart before notification, stale runs and dead-letter handling. It drops that schema, its mission-specific Redis keys and its random `aerqyn.test.*` queues afterward; it never deletes development missions. The database user needs schema creation permission. The standard test run skips this integration suite explicitly. An interrupted run may leave test data behind.
 
 Use `npm run format` to apply formatting. Backend and shared-package tests are checked separately from production emit through the test TypeScript config. Do not commit dependencies, `.env`, build output or coverage.
 
-Container readiness and application liveness are different checks: `/health` reports a running process even if infrastructure is unavailable. Database request failures return a generic JSON 500. RabbitMQ jobs and the dashboard belong to later milestones. All mission endpoints require JWT authentication; mutations additionally require the Researcher role.
+Container readiness and application liveness are different checks: `/health` reports a running process even if infrastructure is unavailable. Database request failures return a generic JSON 500. The dashboard belongs to M5. All mission endpoints require JWT authentication; mutations additionally require the Researcher role.
 
 ## Mission API (M1)
 
@@ -130,7 +130,7 @@ Success responses use `{ "data": ... }`; lists also return `pagination` with `li
 
 The schema is in `apps/api/prisma/schema.prisma`; committed SQL migrations describe database changes, while the ignored generated client provides typed queries. For an intentional future schema change use `npm run db:dev --workspace @aerqyn/api -- --name descriptive_change`; review and commit the generated SQL. Use `db:migrate` to apply committed migrations without generating new ones.
 
-The M3 live flow is worker → Redis cache/pub/sub → API → Socket.IO clients. RabbitMQ analysis jobs, telemetry snapshot persistence and replay remain later milestone work.
+The live flow is worker → Redis cache/pub/sub → API → Socket.IO clients. M4 adds durable RabbitMQ analysis jobs and PostgreSQL alerts. Telemetry replay and JSONL event logging remain later milestone work.
 
 ## Authentication and RBAC (M2)
 
@@ -175,7 +175,7 @@ Limitations: local demo only; no registration, password-reset, user-management, 
 
 Commands accept an absent body or `{}` only. Starting an already running mission or stopping a non-running mission returns 409 `INVALID_STATE`. Missing missions return 404. Editing/deleting a running mission returns 409; stop it first. Starting assigns a new persisted `startedAt` value; stopped/completed missions can restart. Duration and telemetry interval use the existing mission settings. Reads return 503 `UNAVAILABLE` if Redis is not ready.
 
-The worker polls PostgreSQL every 100 ms without overlapping ticks. It locks each running mission row while generating and caching/publishing a frame, preventing concurrent lifecycle changes during that tick. Frame timestamps are quantized to the configured telemetry interval; identical frames are not republished. Three drones follow offset square routes in a synthetic 100-by-100 field at five field units per second. Battery decreases by 0.02 percentage points per second. Connections stay `CONNECTED` until M4 adds synthetic anomalies. At the duration boundary, the final frame has zero speed and `COMPLETED` status, and PostgreSQL records completion.
+The worker polls PostgreSQL every 100 ms without overlapping ticks. It locks each running mission row while generating and caching/publishing a frame, preventing concurrent lifecycle changes during that tick. Frame timestamps are quantized to the configured telemetry interval; identical frames are not republished. Three drones follow offset square routes in a synthetic 100-by-100 field at five field units per second. Battery decreases by 0.02 percentage points per second. Normal samples report `CONNECTED`; M4 injection samples may report `DISCONNECTED`. At the duration boundary, the final frame has zero speed and `COMPLETED` status, and PostgreSQL records completion. Broker connection/confirmation failures can delay a worker cycle by several seconds.
 
 Movement depends on the persisted start time, so restarting a worker resumes elapsed mission time. Missed frames are skipped; an outage longer than the remaining duration leads to completion when infrastructure returns. PostgreSQL is the source of mission status; Redis caches frames under `aerqyn:mission:<id>:state` for two hours and publishes them on `aerqyn:telemetry`. The API validates incoming frames and checks their mission/run identity before delivery. Reads return `null` before the first frame, after stop, or while only an earlier run is cached. Completed frames remain readable until expiration. This cache is not telemetry history.
 
@@ -203,6 +203,45 @@ Each socket subscribes to one mission at a time. Joining another leaves the prev
 
 Viewer counts represent subscribed connections, so two tabs count as two viewers. Redis sorted sets store socket IDs with 45-second leases, refreshed every 15 seconds. Leave/disconnect removes entries; reads and presence updates prune expired leases, and the key expires after 60 seconds without refresh. A process crash can leave a viewer counted until its lease expires. Graceful cleanup is asynchronous. All synthetic telemetry remains local; no real-drone interface exists.
 
-To verify the running Docker stack (seed demo users first), run `npm run smoke:simulation`. It uses `.env` credentials without logging them, opens WebSocket and polling clients through the web proxy, verifies isolation, permissions, movement, cache, stop/restart/completion and presence, then deletes its temporary missions. It needs the running API, worker, web, PostgreSQL and Redis. `SIMULATION_ORIGIN` can override the web URL. Completed smoke cache entries expire naturally.
+To verify the running Docker stack (seed demo users first), run `npm run smoke:simulation`. It uses `.env` credentials without logging them, opens WebSocket and polling clients through the web proxy, verifies isolation, permissions, movement, cache, all three anomaly types, persistent/live alerts, stop/restart/completion and presence, then deletes its temporary missions and their alerts/jobs. It needs all six running services. `SIMULATION_ORIGIN` can override the web URL. Completed smoke cache entries expire naturally.
 
 Backend concepts: a **room** routes events only to subscribers of a mission; **pub/sub** carries live worker events between processes. Redis pub/sub is transient and can lose frames during disconnects; joining returns the latest cache and future frames resume after reconnect. PostgreSQL transactions serialize mission lifecycle changes, but PostgreSQL and Redis do not share an atomic transaction. This local MVP does not guarantee exactly-once delivery, replay, immediate lifecycle notifications, or production scaling. Run one API and one worker; coordinated multi-instance deployment and backpressure need further work.
+
+## Synthetic anomalies and alerts (M4)
+
+Researcher commands use `POST /missions/:id/anomalies` with exactly:
+
+```json
+{ "droneId": "drone-1", "type": "GPS_JUMP" }
+```
+
+Valid drone IDs are `drone-1`, `drone-2`, and `drone-3`. Types are `GPS_JUMP`, `BATTERY_DROP`, and `COMMUNICATION_LOSS`. The mission must be running and within its configured duration. Unknown fields/types/IDs return 400; missing missions return 404; inactive/elapsed missions return 409; 100 pending jobs for a mission returns 429 `QUEUE_FULL`. Unauthenticated requests return 401 and Observer writes return 403. The accepted response is HTTP 202 with `{ "data": { "id": "job UUID", "missionId": "mission UUID", "status": "PENDING" } }`. Acceptance means the database saved the job; analysis is asynchronous. Retrying an HTTP request creates another intentional injection.
+
+The API locks the mission, generates a deterministic baseline and one modified synthetic sample, and saves both in `AnomalyJob`. GPS injection adds 100 field units to X; battery injection subtracts 40 percentage points (clamped at zero); communication injection sets `DISCONNECTED` and zero speed. Other drones stay unchanged. These are single samples, not lasting changes to the flight engine. Telemetry permits bounded out-of-field positions (-1000 to 1000) for synthetic GPS anomalies.
+
+About once a second, the worker relays pending database jobs to the durable `aerqyn.anomaly-analysis` RabbitMQ queue using persistent messages and publisher confirmations. Queue messages contain only the job UUID; the worker reads and validates the saved measurements. The consumer uses prefetch 1 and manual acknowledgements. It locks the mission and job, compares measurements, and commits alerts together with the processing outcome:
+
+| Rule               | Detection condition                                                                |
+| ------------------ | ---------------------------------------------------------------------------------- |
+| GPS jump           | Euclidean displacement exceeds `20 + previous speed × elapsed seconds` field units |
+| Battery drop       | More than 20 percentage points lost between samples                                |
+| Communication loss | Connection changes from `CONNECTED` to `DISCONNECTED`                              |
+
+The detector does not infer an alert from the command label. Duplicate jobs are harmless after processing; row locks and a unique `(jobId, droneId, type)` constraint prevent duplicate alerts. Stop/restart makes queued old-run jobs `STALE`; malformed stored payloads become `INVALID`. Invalid RabbitMQ envelopes are rejected to `aerqyn.anomaly-analysis.dead` for inspection. Transient database processing failures leave the job pending; the message is acknowledged and the database outbox republishes after five seconds, avoiding a tight requeue loop. Broker reconnection is retried after five seconds; confirmations time out after five seconds. No broker credential is sent to the browser.
+
+After committing analysis, the worker publishes the modified sample on the existing `telemetry` stream and alert events through Redis `aerqyn:alerts`. The API validates run identity and authentication before emitting Socket.IO `alert` events to that mission's subscribers. Each alert has `id`, `missionId`, `startedAt`, `droneId`, `type`, `message`, and `createdAt`. Register `socket.on('alert', handler)` before issuing commands. Anomaly samples keep their original measurement timestamp and can arrive after a newer normal frame; they do not replace the latest normal Redis cache. Normal ticks continue their deterministic route.
+
+Both roles can read `GET /missions/:id/alerts?limit=20&offset=0` (limit 1–100, offset 0–100000). It returns `{ "data": [alerts], "pagination": { "limit": 20, "offset": 0 } }`, newest first with ID tie-breaking, including earlier runs of that mission. Use `startedAt` to distinguish runs. Reconnect clients should fetch history because live Redis delivery is transient. Mission deletion cascades to its jobs and alerts.
+
+PowerShell example after login and starting a mission:
+
+```powershell
+$body = @{ droneId = 'drone-1'; type = 'GPS_JUMP' } | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri "http://localhost:3000/missions/$missionId/anomalies" -Headers $headers -ContentType application/json -Body $body
+# Allow asynchronous processing, then fetch persisted alerts.
+Invoke-RestMethod -Uri "http://localhost:3000/missions/$missionId/alerts" -Headers $headers
+```
+
+Files: `apps/simulation/src/anomalies.ts` contains contracts/injection/detection; `apps/api/src/anomalies.ts` handles authorized commands/history; `apps/worker/src/anomalies.ts` handles queue delivery, transactions and notification; `apps/api/src/realtime.ts` delivers room events. The Prisma schema/migration persists jobs/alerts; integration and smoke tests exercise the complete flow.
+
+Backend concepts: a **transactional outbox** saves work in the same database transaction as acceptance, so RabbitMQ can be unavailable without losing accepted requests. **Idempotent processing** lets retries reuse a job UUID without duplicating alerts. PostgreSQL, RabbitMQ and Redis do not share one transaction: notifications may repeat after a crash (deduplicate by alert ID), and live subscribers can miss them during disconnects. Unsent events for stopped/restarted missions are suppressed, while persisted alerts remain readable. Jobs/alerts have no automatic retention policy, and dead letters require manual inspection. This milestone adds no dashboard, telemetry replay, or JSONL logging.
