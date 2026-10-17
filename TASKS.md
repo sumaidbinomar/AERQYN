@@ -110,12 +110,26 @@ Verification on 2026-10-17:
 
 ## M5 — Frontend
 
-- [ ] Build login screen
-- [ ] Build animated 2D simulation field
-- [ ] Build telemetry cards
-- [ ] Add mission and anomaly controls
-- [ ] Add live alert timeline
-- [ ] Add basic telemetry replay
+- [x] Build login screen
+- [x] Build animated 2D simulation field
+- [x] Build telemetry cards
+- [x] Add mission and anomaly controls
+- [x] Add live alert timeline
+- [x] Add basic telemetry replay
+
+Verification on 2026-10-17:
+
+- Built the requested dark navy/cyan mission-control layout: seeded-account login, mission directory and editor, animated synthetic 2D field, three telemetry cards, Researcher controls, Observer view, and live alert timeline. The responsive interface includes keyboard focus styles, a modal editor, reduced-motion support, explicit deletion confirmation and visible request/connection errors.
+- Added recorded-run selection, timestamp-paced playback, scrubbing and return-to-live controls. The worker persists one normal sample per five-second bucket plus completion in PostgreSQL. The authenticated replay endpoint supports both roles, validates query inputs and separates launches by start timestamp. Mission deletion cascades to recordings. No JSONL logging or other M6 work was implemented.
+- Extracted browser-safe shared Zod contracts without pulling Redis into the frontend bundle. Tokens remain in memory, refresh requires login, and expiry/401 responses return the user to login. Socket cleanup handles mission changes/logout; reconnection reconciles alert history, deduplicates IDs and rejects out-of-order telemetry. Backend JWT/RBAC remain authoritative.
+- `npm run check` passed: lint, formatting, strict application/test TypeScript checks, 90 tests and all four workspace builds. Five real-infrastructure tests are explicitly skipped by the default suite. The final frontend text/retry adjustments passed lint and the strict production build.
+- `npm run test:integration` passed all five PostgreSQL/Redis/RabbitMQ tests. Added replay assertions verify repeated-tick deduplication, Observer reads, separate restarted runs, persisted completion and empty unknown-run results. Endpoint tests cover authentication and invalid selectors; browser data tests cover frame ordering, alert deduplication, response validation and authorization failures.
+- `npm run smoke` passed compiled services, web preview, API proxy, protected routes and invalid-port rejection. Expanded `npm run smoke:simulation` passed against the Docker stack through the web proxy, including both roles, WebSocket/polling delivery, anomalies, alert persistence, two recorded runs, completion, frontend HTML and viewer cleanup. Temporary smoke missions and recordings were removed afterward.
+- Full Compose build/start passed and all six services became healthy. The API applied the fifth migration. Prisma database/schema comparison passed after explicitly matching the snapshot foreign key's ON UPDATE NO ACTION setting. Mission IDs are immutable in the API.
+- Final web-image rebuild/start passed; all six services remain healthy. Verified the served HTML, corrected JavaScript asset and API proxy. Lint, strict type checks and all 90 default tests passed again after the schema alignment.
+- Corrected Windows text encoding in interface symbols during review. Browser automation and visual inspection were unavailable in this session; manual UI/keyboard/mobile review remains a verification limitation, with a walkthrough documented in README. Automated checks do not establish visual correctness.
+- Replay contains selected normal frames, not every tick or injected anomaly sample; worker outages leave gaps. Alerts remain a separate history. The interface shows up to 100 alerts/recorded runs; recordings have no automatic retention policy. Mission status refreshes every five seconds; refreshed browser pages require login. Existing pre-M5 flights have no recordings.
+- Local commits include `3a2d91a` (snapshot storage, shared contracts and replay API/tests) `e02752b` (mission-control frontend and browser data tests), and `a44277f` (deployed replay verification and schema alignment). Completion documentation is saved in a separate local commit. No pushes were made. M5 implementation is complete; wait for approval before starting M6.
 
 ## M6 — Final Verification
 

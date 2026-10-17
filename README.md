@@ -52,7 +52,7 @@ npm run dev:worker
 npm run dev:web
 ```
 
-Open <http://localhost:5173>. The placeholder has no dashboard or application controls. API liveness is available at <http://localhost:3000/health>; worker liveness is at <http://localhost:3001/health> when running on the host. The web proxy makes <http://localhost:5173/api/health> reach the API without requiring CORS.
+Open <http://localhost:5173>. The mission-control dashboard provides login, mission management, live telemetry, anomaly controls and recorded-run replay. API liveness is available at <http://localhost:3000/health>; worker liveness is at <http://localhost:3001/health> when running on the host. The web proxy makes <http://localhost:5173/api/health> reach the API without requiring CORS.
 
 Backend scripts load the root `.env`; Vite loads it using `envDir`. If changing `API_PORT`, also change `API_PROXY_TARGET` to match. Environment variables already set in the terminal take precedence. Set `DATABASE_URL` to match your database username, password, host port and database name; URL-encode credentials. Set `REDIS_URL` for both backend services (default `redis://127.0.0.1:6379`); change it too if changing `REDIS_PORT`. The worker requires `RABBITMQ_URL` with your broker username, URL-encoded password and host port, for example `amqp://aerqyn:your_password@127.0.0.1:5672`. Compose supplies internal database, Redis and broker URLs. The API validates its database URL, Redis URL and `JWT_SECRET` at startup. API development, type checking and builds automatically generate the Prisma client.
 
@@ -100,7 +100,7 @@ npm run smoke
 
 Use `npm run format` to apply formatting. Backend and shared-package tests are checked separately from production emit through the test TypeScript config. Do not commit dependencies, `.env`, build output or coverage.
 
-Container readiness and application liveness are different checks: `/health` reports a running process even if infrastructure is unavailable. Database request failures return a generic JSON 500. The dashboard belongs to M5. All mission endpoints require JWT authentication; mutations additionally require the Researcher role.
+Container readiness and application liveness are different checks: `/health` reports a running process even if infrastructure is unavailable. Database request failures return a generic JSON 500. The M5 dashboard provides login and mission controls. All mission endpoints require JWT authentication; mutations additionally require the Researcher role.
 
 ## Mission API (M1)
 
@@ -130,7 +130,7 @@ Success responses use `{ "data": ... }`; lists also return `pagination` with `li
 
 The schema is in `apps/api/prisma/schema.prisma`; committed SQL migrations describe database changes, while the ignored generated client provides typed queries. For an intentional future schema change use `npm run db:dev --workspace @aerqyn/api -- --name descriptive_change`; review and commit the generated SQL. Use `db:migrate` to apply committed migrations without generating new ones.
 
-The live flow is worker → Redis cache/pub/sub → API → Socket.IO clients. M4 adds durable RabbitMQ analysis jobs and PostgreSQL alerts. Telemetry replay and JSONL event logging remain later milestone work.
+The live flow is worker → Redis cache/pub/sub → API → Socket.IO clients. M4 adds durable RabbitMQ analysis jobs and PostgreSQL alerts. M5 adds stored telemetry replay; JSONL event logging remains M6.
 
 ## Authentication and RBAC (M2)
 
@@ -158,11 +158,11 @@ Through the web proxy use `/api/auth/login` and `/api/missions` on port 5173 ins
 
 The login flow is JSON -> Zod -> user lookup -> salted scrypt password check -> signed JWT. Protected requests flow through Bearer token verification -> current user/role lookup in PostgreSQL -> role middleware -> existing mission validation and database operations. Authentication establishes identity (401 on failure); authorization checks that identity's permissions (403 on failure).
 
-[jose JWT verification](https://github.com/panva/jose/blob/main/docs/jwt/verify/interfaces/JWTVerifyOptions.md) checks the signature with the pinned HS256 algorithm, issuer `aerqyn-api`, audience `aerqyn`, and required subject/issued-at/expiry claims. Tokens expire after 15 minutes. Roles come from the database on every request, so changing a role or deleting a user affects existing tokens immediately. Signing out in a future UI can discard the token; server-side token revocation and refresh tokens are not implemented. Password reseeding does not invalidate existing tokens; rotating `JWT_SECRET` invalidates all of them.
+[jose JWT verification](https://github.com/panva/jose/blob/main/docs/jwt/verify/interfaces/JWTVerifyOptions.md) checks the signature with the pinned HS256 algorithm, issuer `aerqyn-api`, audience `aerqyn`, and required subject/issued-at/expiry claims. Tokens expire after 15 minutes. Roles come from the database on every request, so changing a role or deleting a user affects existing tokens immediately. Signing out discards the in-memory token; server-side token revocation and refresh tokens are not implemented. Password reseeding does not invalidate existing tokens; rotating `JWT_SECRET` invalidates all of them.
 
 `db:seed` explicitly upserts the two configured demo accounts, updating passwords and roles while preserving account IDs. Running it again is safe for missions and does not create duplicate emails. Changing a demo email creates a new account and leaves the previous email's account intact. Docker applies migrations at startup but does **not** automatically reseed credentials; use the explicit seed command above after first startup or when intentionally updating demo credentials.
 
-Limitations: local demo only; no registration, password-reset, user-management, refresh-token, or login-screen features. The login limiter uses process-local memory and resets on restart. The local web proxy shares its API-facing IP across browser clients, so those logins share a limit. A future public deployment would need a deliberate proxy and distributed rate-limit configuration. Health remains public process liveness only. The M5 frontend has not started.
+Limitations: local demo only; no registration, password-reset, user-management, refresh-token features. The login limiter uses process-local memory and resets on restart. The local web proxy shares its API-facing IP across browser clients, so those logins share a limit. A future public deployment would need a deliberate proxy and distributed rate-limit configuration. Health remains public process liveness only. The M5 frontend supports seeded-account login.
 
 ## Drone simulation and live subscriptions (M3)
 
@@ -179,7 +179,7 @@ The worker polls PostgreSQL every 100 ms without overlapping ticks. It locks eac
 
 Movement depends on the persisted start time, so restarting a worker resumes elapsed mission time. Missed frames are skipped; an outage longer than the remaining duration leads to completion when infrastructure returns. PostgreSQL is the source of mission status; Redis caches frames under `aerqyn:mission:<id>:state` for two hours and publishes them on `aerqyn:telemetry`. The API validates incoming frames and checks their mission/run identity before delivery. Reads return `null` before the first frame, after stop, or while only an earlier run is cached. Completed frames remain readable until expiration. This cache is not telemetry history.
 
-Use a Socket.IO v4 client with `auth: { token: accessToken }`. Connect to `http://localhost:5173` through the web proxy (default `/socket.io` path), or directly to port 3000 from a Node client. The proxy supports polling and WebSocket upgrades. The existing web page remains a placeholder; M3 adds no dashboard.
+Use a Socket.IO v4 client with `auth: { token: accessToken }`. Connect to `http://localhost:5173` through the web proxy (default `/socket.io` path), or directly to port 3000 from a Node client. The proxy supports polling and WebSocket upgrades. The M5 dashboard uses this authenticated connection.
 
 ```js
 import { io } from 'socket.io-client';
@@ -244,4 +244,92 @@ Invoke-RestMethod -Uri "http://localhost:3000/missions/$missionId/alerts" -Heade
 
 Files: `apps/simulation/src/anomalies.ts` contains contracts/injection/detection; `apps/api/src/anomalies.ts` handles authorized commands/history; `apps/worker/src/anomalies.ts` handles queue delivery, transactions and notification; `apps/api/src/realtime.ts` delivers room events. The Prisma schema/migration persists jobs/alerts; integration and smoke tests exercise the complete flow.
 
-Backend concepts: a **transactional outbox** saves work in the same database transaction as acceptance, so RabbitMQ can be unavailable without losing accepted requests. **Idempotent processing** lets retries reuse a job UUID without duplicating alerts. PostgreSQL, RabbitMQ and Redis do not share one transaction: notifications may repeat after a crash (deduplicate by alert ID), and live subscribers can miss them during disconnects. Unsent events for stopped/restarted missions are suppressed, while persisted alerts remain readable. Jobs/alerts have no automatic retention policy, and dead letters require manual inspection. This milestone adds no dashboard, telemetry replay, or JSONL logging.
+Backend concepts: a **transactional outbox** saves work in the same database transaction as acceptance, so RabbitMQ can be unavailable without losing accepted requests. **Idempotent processing** lets retries reuse a job UUID without duplicating alerts. PostgreSQL, RabbitMQ and Redis do not share one transaction: notifications may repeat after a crash (deduplicate by alert ID), and live subscribers can miss them during disconnects. Unsent events for stopped/restarted missions are suppressed, while persisted alerts remain readable. Jobs/alerts have no automatic retention policy, and dead letters require manual inspection. M5 adds the dashboard and telemetry replay; JSONL logging remains M6.
+
+## M5 - Mission-control frontend and recorded telemetry
+
+Open **http://localhost:5173** with the Compose stack running. Log in using the
+Researcher or Observer email/password configured in your ignored `.env` and
+seeded in M2. Passwords are never embedded in the frontend. Tokens stay in React
+memory, so refreshing the page requires signing in again; sessions expire after
+15 minutes.
+
+### Demo walkthrough
+
+1. Sign in as Researcher, choose **Create mission**, and enter a name, description,
+   duration (10-3600 seconds) and telemetry interval (100-5000 ms).
+2. Select the mission and **Launch mission**. Three colored markers move around
+   the synthetic field; the cards show coordinates, speed, battery and connection.
+3. Open a separate browser session as Observer. Select the same mission to see
+   telemetry and viewer presence. Observer controls are disabled; backend RBAC
+   still rejects writes independently of the interface.
+4. Select a drone and an anomaly, then **Inject anomaly**. Acceptance queues the
+   job; the timeline updates when the worker persists and publishes its result.
+5. Stop or finish the flight. Select **Recorded runs**, choose a run, and scrub or
+   play its stored frames. Playback follows recorded timestamp gaps. **Live**
+   returns to current telemetry. Click **Recorded runs** again to refresh a
+   recording that is still in progress.
+6. Edit or delete a stopped mission. Deletion requires confirmation and also
+   removes its alerts, jobs and telemetry recordings.
+
+### Replay API and data flow
+
+Authenticated `GET /missions/:id/replay` returns
+`{ data: { runs: string[], frames: Telemetry[] } }`. Both roles can read it. Runs
+are ISO start timestamps, newest first (up to 100); frames default to the latest
+recorded run. An optional `?startedAt=<ISO timestamp>` selects a particular run.
+A nonexistent run returns an empty frame array; a missing mission returns 404.
+Unknown query keys and invalid IDs/timestamps return 400.
+
+The browser sends JWT-authenticated commands through Vite's `/api` proxy to
+Express. The worker generates telemetry, stores selected normal frames in
+PostgreSQL, and publishes live samples through Redis. The API delivers validated
+samples to authenticated Socket.IO mission rooms. The browser validates incoming
+payloads with shared Zod contracts, ignores older samples/runs, and deduplicates
+alerts by ID when reconciling live events with history after reconnecting.
+
+The `TelemetrySnapshot` table uses `(missionId, startedAt, elapsedMs)` as its
+primary key. The worker records at most one normal sample per five-second bucket,
+plus the completion frame, inside the existing mission-row transaction. This
+makes duplicate ticks idempotent and keeps separate launches separate. Mission
+row locks coordinate snapshot creation with stop/restart/delete operations.
+Replay reads PostgreSQL independently of Redis. Existing M0-M4 runs have no
+backfilled recordings.
+
+### Main implementation files
+
+- `apps/web/src/App.tsx`: login, mission directory/editor, field, cards, controls,
+  timeline and replay UI; `styles.css`: responsive navy/cyan design and reduced
+  motion support.
+- `apps/web/src/api.ts`: validated HTTP boundaries and frame/alert reconciliation;
+  `useMissionStream.ts`: authenticated subscriptions, reconnect and cleanup.
+- `apps/simulation/src/contracts.ts`: browser-safe shared settings and telemetry
+  schemas, separated from the Redis client entry point.
+- `apps/worker/src/simulator.ts`: selected snapshot writes.
+- `apps/api/src/simulation.ts`, `apps/api/prisma/schema.prisma`, and migration
+  `202610170005_telemetry_snapshots`: authenticated replay reads and storage.
+- API integration/endpoint tests, `apps/web/src/api.test.ts`, and
+  `scripts/simulation-smoke.mjs`: regression and live-stack coverage.
+
+Two useful concepts: **idempotency** prevents repeated work from producing
+multiple copies of the same snapshot; **reconciliation** merges durable history
+with transient live events so reconnects do not duplicate alerts.
+
+### Verification and limits
+
+Run `npm run check`, `npm run test:integration`, `npm run smoke`, and
+`npm run smoke:simulation` (use `npm.cmd` in PowerShell). Integration tests use an
+isolated database schema and verify recording deduplication, run separation,
+Observer reads and replay after restart. Browser data tests cover out-of-order
+frames, duplicate alerts, payload validation and authorization failures.
+
+Recordings contain selected normal telemetry, not every tick or injected anomaly
+sample; alerts remain separately available across all runs. Worker downtime can
+leave recording gaps. Replay is a basic timestamp-paced sequence, not video or
+interpolation. The alert panel shows the latest 100 alerts, and the run picker
+shows the latest 100 recorded runs. Recordings have no automatic retention policy;
+mission deletion cascades to them. Mission status refreshes every five seconds.
+Role changes remain enforced immediately by the backend; UI role labels update
+on the next login. Redis delivery remains transient. The final browser visual and
+interactive review is manual because no browser-control tool is available in this
+session. JSONL logging and the final demo remain M6.
