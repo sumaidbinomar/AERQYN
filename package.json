@@ -22,6 +22,7 @@
     "test": "npm run build --workspace @aerqyn/simulation && vitest run",
     "test:integration": "npm run build --workspace @aerqyn/simulation && node --env-file-if-exists=.env scripts/test-integration.mjs",
     "smoke": "node scripts/smoke.mjs",
+    "smoke:simulation": "node --env-file-if-exists=.env scripts/simulation-smoke.mjs",
     "check": "npm run lint && npm run format:check && npm run typecheck && npm test && npm run build"
   },
   "devDependencies": {

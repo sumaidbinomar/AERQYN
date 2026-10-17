@@ -28,15 +28,13 @@ export function createRealtime(
   const auth = createAuth(database, secret);
   io.use((socket, next) => {
     const token = z
-      .string()
-      .min(1)
-      .max(4096)
-      .safeParse(socket.handshake.auth.token);
+      .object({ token: z.string().min(1).max(4096) })
+      .safeParse(socket.handshake.auth);
     if (!token.success) {
       next(new Error('UNAUTHORIZED'));
       return;
     }
-    auth.verifyToken(token.data).then(
+    auth.verifyToken(token.data.token).then(
       () => next(),
       () => next(new Error('UNAUTHORIZED')),
     );

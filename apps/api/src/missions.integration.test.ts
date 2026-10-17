@@ -8,6 +8,23 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from './app.js';
 import { createDatabase } from './database.js';
 import { verifyPassword } from './passwords.js';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
+import { io as connectSocket, type Socket } from 'socket.io-client';
+import pg from 'pg';
+import {
+  connectRedis,
+  simulate,
+  settingsSchema,
+  stateKey,
+  telemetryChannel,
+  viewersKey,
+  type Telemetry,
+} from '@aerqyn/simulation';
+import { createRealtime } from './realtime.js';
+import { tick } from '../../worker/src/simulator.js';
+import { vi } from 'vitest';
+import { SignJWT } from 'jose';
 
 const seedEnvironment = {
   DEMO_RESEARCHER_PASSWORD: 'integration-researcher-password',
@@ -220,5 +237,254 @@ describe.skipIf(process.env.AERQYN_INTEGRATION !== '1')(
       ).toBe(404);
       expect((await request(app).get('/missions')).body.data).toEqual([]);
     });
+
+    it('streams worker telemetry to authenticated mission rooms, caches state, and tracks viewers', async () => {
+      const redis = connectRedis(
+        process.env.REDIS_URL ?? 'redis://127.0.0.1:6379',
+      );
+      const subscriber = connectRedis(
+        process.env.REDIS_URL ?? 'redis://127.0.0.1:6379',
+      );
+      const pool = new pg.Pool({
+        connectionString: process.env.DATABASE_URL,
+        options: `-c search_path=${schema}`,
+      });
+      const server = createServer(createApp(database, testSecret, redis));
+      const realtime = createRealtime(
+        server,
+        database,
+        testSecret,
+        redis,
+        subscriber,
+      );
+      const sockets: Socket[] = [];
+      const ids: string[] = [];
+      try {
+        await Promise.all([redis.connect(), subscriber.connect()]);
+        await realtime.start();
+        server.listen(0, '127.0.0.1');
+        await once(server, 'listening');
+        const address = server.address();
+        if (!address || typeof address === 'string')
+          throw new Error('Missing test port');
+        const url = `http://127.0.0.1:${address.port}`;
+        async function socketFor(accessToken: string) {
+          const socket = connectSocket(url, {
+            auth: { token: accessToken },
+            transports: ['websocket'],
+            reconnection: false,
+          });
+          sockets.push(socket);
+          await new Promise<void>((resolve, reject) => {
+            socket.once('connect', resolve);
+            socket.once('connect_error', reject);
+          });
+          return socket;
+        }
+        const rejected = connectSocket(url, {
+          auth: { token: 'invalid' },
+          reconnection: false,
+        });
+        sockets.push(rejected);
+        expect(
+          (
+            await new Promise<Error>((resolve) =>
+              rejected.once('connect_error', resolve),
+            )
+          ).message,
+        ).toBe('UNAUTHORIZED');
+        const login = await rawRequest(app).post('/auth/login').send({
+          email: 'observer@aerqyn.local',
+          password: seedEnvironment.DEMO_OBSERVER_PASSWORD,
+        });
+        const observer = missionClient(
+          createApp(database, testSecret, redis),
+          login.body.data.accessToken,
+        );
+        for (let index = 0; index < 2; index++) {
+          const created = await request(app)
+            .post('/missions')
+            .send({
+              name: `Stream ${index}`,
+              settings: { durationSeconds: 10, telemetryIntervalMs: 100 },
+            });
+          ids.push(created.body.data.id);
+        }
+        const [id, otherId] = ids as [string, string];
+        expect((await observer.post(`/missions/${id}/start`)).status).toBe(403);
+        const starts = await Promise.all([
+          request(app).post(`/missions/${id}/start`),
+          request(app).post(`/missions/${id}/start`),
+        ]);
+        expect(starts.map((response) => response.status).sort()).toEqual([
+          200, 409,
+        ]);
+        const start = new Date(
+          (await database.mission.findUniqueOrThrow({ where: { id } }))
+            .startedAt!,
+        );
+        expect(
+          (
+            await request(app)
+              .patch(`/missions/${id}`)
+              .send({ name: 'blocked' })
+          ).status,
+        ).toBe(409);
+        expect((await request(app).delete(`/missions/${id}`)).status).toBe(409);
+        const a = await socketFor(token);
+        const b = await socketFor(login.body.data.accessToken);
+        const c = await socketFor(token);
+        const events: Telemetry[][] = [[], [], []];
+        [a, b, c].forEach((socket, index) =>
+          socket.on('telemetry', (value: Telemetry) =>
+            events[index]!.push(value),
+          ),
+        );
+        expect(
+          await a
+            .timeout(3000)
+            .emitWithAck('mission:join', { missionId: 'bad' }),
+        ).toMatchObject({ error: { code: 'VALIDATION_ERROR' } });
+        expect(
+          await a
+            .timeout(3000)
+            .emitWithAck('mission:join', { missionId: randomUUID() }),
+        ).toMatchObject({ error: { code: 'NOT_FOUND' } });
+        for (const socket of [a, b])
+          expect(
+            await socket
+              .timeout(3000)
+              .emitWithAck('mission:join', { missionId: id }),
+          ).toMatchObject({ data: { missionId: id } });
+        await c
+          .timeout(3000)
+          .emitWithAck('mission:join', { missionId: otherId });
+        expect(
+          (await observer.get(`/missions/${id}/viewers`)).body.data.count,
+        ).toBe(2);
+        await tick(pool, redis, new Date(+start + 250));
+        await vi.waitFor(() => {
+          expect(events[0]).toHaveLength(1);
+          expect(events[1]).toHaveLength(1);
+        });
+        expect(events[2]).toHaveLength(0);
+        expect(events[0]![0]).toMatchObject({
+          missionId: id,
+          elapsedMs: 200,
+          status: 'RUNNING',
+        });
+        expect(events[0]![0]!.drones).toHaveLength(3);
+        expect(
+          (await observer.get(`/missions/${id}/telemetry`)).body.data,
+        ).toEqual(events[0]![0]);
+        await tick(pool, redis, new Date(+start + 250));
+        await tick(pool, redis, new Date(+start + 350));
+        await vi.waitFor(() => expect(events[0]).toHaveLength(2));
+        expect(events[0]![1]!.elapsedMs).toBe(300);
+        await b
+          .timeout(3000)
+          .emitWithAck('mission:join', { missionId: otherId });
+        expect(
+          (await observer.get(`/missions/${id}/viewers`)).body.data.count,
+        ).toBe(1);
+        await c.timeout(3000).emitWithAck('mission:leave');
+        expect(
+          (await observer.get(`/missions/${otherId}/viewers`)).body.data.count,
+        ).toBe(1);
+        b.disconnect();
+        await vi.waitFor(async () =>
+          expect(
+            (await observer.get(`/missions/${otherId}/viewers`)).body.data
+              .count,
+          ).toBe(0),
+        );
+        await redis.zAdd(viewersKey(id), {
+          score: Date.now() - 1,
+          value: 'expired-socket',
+        });
+        expect(
+          (await observer.get(`/missions/${id}/viewers`)).body.data.count,
+        ).toBe(1);
+        expect((await request(app).post(`/missions/${id}/stop`)).status).toBe(
+          200,
+        );
+        expect(
+          (await observer.get(`/missions/${id}/telemetry`)).body.data,
+        ).toBeNull();
+        await tick(pool, redis, new Date(+start + 500));
+        expect((await request(app).post(`/missions/${id}/stop`)).status).toBe(
+          409,
+        );
+        const restarted = await request(app).post(`/missions/${id}/start`);
+        expect(restarted.status).toBe(200);
+        expect(
+          (await observer.get(`/missions/${id}/telemetry`)).body.data,
+        ).toBeNull();
+        const nextStart = new Date(restarted.body.data.startedAt);
+        const stale = simulate(
+          id,
+          start,
+          settingsSchema.parse({}),
+          new Date(+start + 500),
+        );
+        await redis.publish(telemetryChannel, JSON.stringify(stale));
+        await tick(pool, redis, new Date(+nextStart + 10000));
+        await vi.waitFor(() => expect(events[0]).toHaveLength(3));
+        expect(events[0]![2]!.status).toBe('COMPLETED');
+        expect(
+          (await database.mission.findUniqueOrThrow({ where: { id } })).status,
+        ).toBe('COMPLETED');
+        expect(
+          (await observer.get(`/missions/${id}/telemetry`)).body.data.status,
+        ).toBe('COMPLETED');
+        const temporary = await database.user.create({
+          data: {
+            email: `socket-${randomUUID()}@test.local`,
+            passwordHash: 'unused',
+            role: 'OBSERVER',
+          },
+        });
+        try {
+          const signed = await new SignJWT({})
+            .setProtectedHeader({ alg: 'HS256' })
+            .setSubject(temporary.id)
+            .setIssuer('aerqyn-api')
+            .setAudience('aerqyn')
+            .setIssuedAt()
+            .setExpirationTime('15m')
+            .sign(new TextEncoder().encode(testSecret));
+          const revoked = await socketFor(signed);
+          await revoked
+            .timeout(3000)
+            .emitWithAck('mission:join', { missionId: id });
+          let received = false;
+          revoked.on('telemetry', () => {
+            received = true;
+          });
+          const disconnected = new Promise<void>((resolve) =>
+            revoked.once('disconnect', () => resolve()),
+          );
+          await database.user.delete({ where: { id: temporary.id } });
+          await redis.publish(
+            telemetryChannel,
+            (await redis.get(stateKey(id)))!,
+          );
+          await disconnected;
+          expect(received).toBe(false);
+        } finally {
+          await database.user.deleteMany({ where: { id: temporary.id } });
+        }
+      } finally {
+        sockets.forEach((socket) => socket.disconnect());
+        await realtime.close();
+        await pool.end();
+        for (const id of ids) {
+          await redis.del([stateKey(id), viewersKey(id)]);
+          await database.mission.deleteMany({ where: { id } });
+        }
+        redis.destroy();
+        subscriber.destroy();
+      }
+    }, 30000);
   },
 );
