@@ -48,10 +48,23 @@ Verification on 2026-10-17:
 
 ## M2 — Authentication and RBAC
 
-- [ ] Implement JWT login
-- [ ] Seed Researcher and Observer accounts
-- [ ] Add authorization middleware
-- [ ] Test protected endpoints
+- [x] Implement JWT login
+- [x] Seed Researcher and Observer accounts
+- [x] Add authorization middleware
+- [x] Test protected endpoints
+
+Verification on 2026-10-17:
+
+- Added a User model and SQL migration with Researcher/Observer roles, unique normalized email addresses, and salted scrypt password hashes. Demo seeding uses validated environment credentials and transactional upserts; rerunning preserves account IDs.
+- Added POST `/auth/login` with strict Zod validation, generic credential errors, 15-minute HS256 JWTs, no-store responses, and a process-local limit of 20 attempts per IP per 15 minutes. JWT verification pins the algorithm, issuer and audience and requires valid identity/time claims.
+- Protected every mission route with authentication. Both roles can read; only Researchers can create, edit or delete. Each authenticated request reads the current database role; deleted users are rejected and role changes apply immediately. Health remains public.
+- `npm run check` passed: lint, formatting, strict application/test TypeScript checks, 66 tests, and all three workspace builds. Three real-database tests are explicitly skipped by the default suite.
+- `npm run test:integration` passed all three PostgreSQL tests in an isolated random schema: authenticated CRUD, persistence through another connection, salted password storage, idempotent seeding, Observer read/write permissions, and immediate role changes. The test schema was removed afterward.
+- `npm run smoke` passed compiled API/worker/web liveness, proxy, direct/proxied unauthenticated mission rejection, and invalid-port configuration checks; child processes were stopped afterward.
+- Applied the User migration to the development database and explicitly seeded both demo accounts. Generated missing M2 secrets only in ignored `.env`; no values were printed. The host seed command required an unsandboxed rerun because tsx's OS user-info lookup failed inside the sandbox; that rerun succeeded.
+- `docker compose config --quiet` and full Compose build/start passed; all six containers are healthy. Explicit seeding inside the API container succeeded. Live direct/proxied checks passed for both demo logins, unauthenticated rejection, Researcher CRUD, Observer reads and denied writes. The verification mission was deleted afterward.
+- README documents configuration, explicit seeding, login examples, role permissions, request flow and limitations. Tokens have no refresh/revocation API; password reseeding does not invalidate existing tokens. Login limits are process-local, and web-proxied browser clients share the proxy's IP limit. No registration, login UI, simulation or M3 work was added. M2 changes are saved in small local Conventional Commits as authorized. No pushes were made.
+- M2 is complete. The local Docker stack is left running; wait for approval before starting M3.
 
 ## M3 — Drone Simulation and WebSockets
 
