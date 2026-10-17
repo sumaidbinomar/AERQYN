@@ -133,10 +133,25 @@ Verification on 2026-10-17:
 
 ## M6 — Final Verification
 
-- [ ] Add persistent timestamped JSONL logs
-- [ ] Verify Docker Compose startup
-- [ ] Run automated tests
-- [ ] Review security and error handling
-- [ ] Add screenshots and architecture diagram
-- [ ] Finish README
-- [ ] Record project demo
+- [x] Add persistent timestamped JSONL logs
+- [x] Verify Docker Compose startup
+- [x] Run automated tests
+- [x] Review security and error handling
+- [x] Add screenshots and architecture diagram
+- [x] Finish README
+- [x] Record project demo
+
+Verification on 2026-10-17:
+
+- Added a strict Zod-validated worker journal with versioned ISO UTC records, serialized append operations, daily UTC filenames and private Linux file permissions. It records startup, newly committed selected normal snapshots, synthetic anomaly samples and persisted alerts. Docker mounts the named `event_logs` volume at `/var/log/aerqyn`, owned by the non-root worker. Host paths are configurable with `EVENT_LOG_DIR`; JSONL and cache files are ignored by Git and excluded from Docker build context. No credentials, tokens, arbitrary requests or exception objects are passed to the journal.
+- Added five journal tests for daily rollover, multiline encoding, concurrent append/restart behavior, unknown-field rejection and write failure/recovery. Infrastructure assertions verify that duplicate sampling buckets journal once, all three anomaly notifications reach the recorder, and journal failure leaves committed alerts and unnotified results available for retry.
+- `npm run check` passed: ESLint, Prettier, strict application/test TypeScript checks, 95 default tests and all four workspace builds. Five real-infrastructure tests are explicitly skipped by the default suite. Final documentation/tool formatting and lint checks also passed.
+- `npm run test:integration` passed all five tests against real PostgreSQL, Redis and RabbitMQ using an isolated schema and queue, including the new journal assertions. An initial run exposed a pre-existing cross-subscription timing assumption: receiving alerts did not imply all telemetry had arrived. The test now waits for both subscriptions; subsequent runs passed. Test resources were cleaned up.
+- `docker compose config --quiet` and full Compose build/start passed; all six services became healthy, including the worker with its new log volume. Final migration status confirms all five committed migrations are applied. Final worker logs show normal startup. Existing data volumes were retained.
+- `npm run smoke` passed compiled API/worker/web liveness, API proxy, protected routes and invalid-port rejection after correcting its stale pre-M5 page-title assertion. `npm run smoke:simulation` passed live WebSocket/polling delivery, room isolation, RBAC, deterministic movement, cache, all anomaly types, durable/live alerts, stop/restart/completion, recorded runs and viewer cleanup. Temporary smoke missions were removed.
+- `node scripts/verify-journal.mjs` passed against the real worker volume: 28 records were valid at that verification point, every event type and all three detected anomaly types were present, files used `0600` permissions, and force-recreating only the worker preserved every existing byte and appended another startup event. Later browser captures added further valid demonstration events. The script is repeatable after live smoke checks and retains the log volume.
+- Reviewed backend authentication/RBAC, validation, parameterized database writes, lifecycle locking, broker acknowledgement/idempotency, realtime authorization and room filtering, error responses, browser boundaries and local infrastructure exposure. `npm audit --omit=dev --audit-level=low` reported zero known vulnerabilities in the installed production dependency graph. Scope and remaining local-demo limitations are documented in `docs/SECURITY.md`; no penetration-test or production-security claim is made.
+- Installed optional Playwright tooling only under ignored `.cache/browser` and its required video encoder in the user's browser cache. Captured the actual local Edge browser with `scripts/capture-demo.mjs`: login, mission creation/launch, visible telemetry movement, all three live anomaly alerts, stop, playback progression, keyboard replay scrubbing, return to live, Observer restrictions and mobile layout at 390px. No page exceptions or mobile horizontal overflow were observed. Capture deletes only its own mission; existing missions remain intact. Desktop/mobile screenshots were visually inspected. Six PNG screenshots and the final silent WebM demo are saved in `docs/media/`; reproduction is documented in `docs/DEMO.md`. Browser selector setup initially required correction and the video encoder installation; the final capture passed. This does not replace exhaustive accessibility or cross-browser testing.
+- Added Mermaid architecture/data-flow diagrams in `docs/ARCHITECTURE.md`, a security review and a demo guide. Updated README status, repository map, setup, log inspection/export, verification commands, implementation files, backend concepts and limitations.
+- The journal is append-only at the application level, without automatic retention, tamper protection, per-write fsync or exactly-once guarantees. A post-commit snapshot log failure/crash can leave a gap while PostgreSQL replay remains intact. Anomaly log failures delay notification; retries can duplicate records and live events, and stopping/restarting suppresses unnotified old-run events. JSONL is not the replay source or a complete security access log. Health remains liveness only; the system targets one local API/worker and never controls physical drones.
+- Local implementation commits: `7bc3924` (persistent journal and integration call sites) and `3824c29` (recovery/persistence verification and smoke assertion). Documentation, screenshots, capture script and this completion record are saved in a separate local Conventional Commit. No pushes were made. M6 is complete; the local Docker stack is left running. Stop here and wait for approval before additional project work.

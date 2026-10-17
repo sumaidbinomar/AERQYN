@@ -2,17 +2,20 @@
 
 A backend-focused UAV digital twin and cybersecurity simulation project. All simulation data is synthetic and local; this project never controls physical drones.
 
-**M0 through M4 (RabbitMQ and Anomaly Detection)** are implemented. [PROJECT.md](PROJECT.md) defines the product, [TASKS.md](TASKS.md) tracks milestones, and [AGENTS.md](AGENTS.md) defines development rules.
+**M0 through M6 are implemented and verified locally.** [PROJECT.md](PROJECT.md) defines the product, [TASKS.md](TASKS.md) records milestone evidence, and [AGENTS.md](AGENTS.md) defines development rules. See the [architecture diagrams](docs/ARCHITECTURE.md), [security review](docs/SECURITY.md), and [screenshots and recorded demo](docs/DEMO.md).
+
+![AERQYN mission-control dashboard](docs/media/dashboard.png)
 
 ## Repository
 
 ```text
 apps/
-  web/       React + Vite + Tailwind placeholder
+  web/       React + Vite + Tailwind mission-control dashboard
   api/       Express JWT/RBAC, mission CRUD, Zod and Prisma/PostgreSQL
-  worker/    Deterministic simulator, RabbitMQ producer/consumer and GET /health
+  worker/    Simulator, RabbitMQ analysis, persistent JSONL journal and GET /health
   simulation/ Shared telemetry schemas, Redis helpers and route calculations
 scripts/     Smoke verification for built processes
+docs/        Architecture, security review, screenshots and browser demo
 compose.yaml PostgreSQL, Redis, RabbitMQ and three app services
 Dockerfile   Shared build with separate api, worker and web targets
 ```
@@ -82,7 +85,7 @@ RabbitMQ health probes run as the `rabbitmq` user through `gosu`. Running an ear
 
 Compose keeps internal app ports fixed and maps configurable host ports from `.env`. Container service names resolve within their networks, so the container web proxy uses `http://api:3000`, while host development uses `http://127.0.0.1:3000`. The browser always uses the web origin. Mission requests flow through web `/api/missions` → Express → Zod validation → Prisma → PostgreSQL → JSON response. Compose supplies the API's internal database URL and runs committed migrations before starting it.
 
-Named volumes retain database, Redis AOF and broker data across container recreation. RabbitMQ has a stable hostname so its node identity remains stable. Changing credentials in `.env` does not automatically change accounts stored in existing volumes. `docker compose down` stops the stack and retains data. Avoid `down -v` unless deliberately discarding all local data.
+Named volumes retain database, Redis AOF, broker data and JSONL event logs across container recreation. RabbitMQ has a stable hostname so its node identity remains stable. Changing credentials in `.env` does not automatically change accounts stored in existing volumes. `docker compose down` stops the stack and retains data. Avoid `down -v` unless deliberately discarding all local data.
 
 Images build TypeScript and Vite assets once; run `docker compose up --build -d --wait` after source changes. Use host development for hot reload. App processes run as the non-root Node user; the web image gives that user ownership of Vite's temporary configuration cache so preview can start. The image deliberately retains development dependencies for this foundation; Vite preview serves the demo build and is not a production hosting solution.
 
@@ -92,6 +95,8 @@ Images build TypeScript and Vite assets once; run `docker compose up --build -d 
 npm run check
 npm run test:integration
 npm run smoke
+npm run smoke:simulation
+node scripts/verify-journal.mjs
 ```
 
 `check` runs ESLint, formatting, strict TypeScript checks, Vitest/Supertest tests and all four workspace builds. `smoke` requires those builds, starts all three application processes on temporary ports, checks API and worker health, checks web HTML and the web-to-API proxy, verifies unauthenticated missions return 401 directly and through the proxy, rejects invalid backend port settings, then stops its child processes. It does not verify Docker or infrastructure.
@@ -130,7 +135,7 @@ Success responses use `{ "data": ... }`; lists also return `pagination` with `li
 
 The schema is in `apps/api/prisma/schema.prisma`; committed SQL migrations describe database changes, while the ignored generated client provides typed queries. For an intentional future schema change use `npm run db:dev --workspace @aerqyn/api -- --name descriptive_change`; review and commit the generated SQL. Use `db:migrate` to apply committed migrations without generating new ones.
 
-The live flow is worker → Redis cache/pub/sub → API → Socket.IO clients. M4 adds durable RabbitMQ analysis jobs and PostgreSQL alerts. M5 adds stored telemetry replay; JSONL event logging remains M6.
+The live flow is worker → Redis cache/pub/sub → API → Socket.IO clients. M4 adds durable RabbitMQ analysis jobs and PostgreSQL alerts. M5 adds stored telemetry replay; M6 adds persistent JSONL event logging.
 
 ## Authentication and RBAC (M2)
 
@@ -205,7 +210,7 @@ Viewer counts represent subscribed connections, so two tabs count as two viewers
 
 To verify the running Docker stack (seed demo users first), run `npm run smoke:simulation`. It uses `.env` credentials without logging them, opens WebSocket and polling clients through the web proxy, verifies isolation, permissions, movement, cache, all three anomaly types, persistent/live alerts, stop/restart/completion and presence, then deletes its temporary missions and their alerts/jobs. It needs all six running services. `SIMULATION_ORIGIN` can override the web URL. Completed smoke cache entries expire naturally.
 
-Backend concepts: a **room** routes events only to subscribers of a mission; **pub/sub** carries live worker events between processes. Redis pub/sub is transient and can lose frames during disconnects; joining returns the latest cache and future frames resume after reconnect. PostgreSQL transactions serialize mission lifecycle changes, but PostgreSQL and Redis do not share an atomic transaction. This local MVP does not guarantee exactly-once delivery, replay, immediate lifecycle notifications, or production scaling. Run one API and one worker; coordinated multi-instance deployment and backpressure need further work.
+Backend concepts: a **room** routes events only to subscribers of a mission; **pub/sub** carries live worker events between processes. Redis pub/sub is transient and can lose frames during disconnects; joining returns the latest cache and future frames resume after reconnect. PostgreSQL transactions serialize mission lifecycle changes, but PostgreSQL and Redis do not share an atomic transaction. This local MVP does not guarantee exactly-once delivery, replay of missed live events, immediate lifecycle notifications, or production scaling. Run one API and one worker; coordinated multi-instance deployment and backpressure need further work.
 
 ## Synthetic anomalies and alerts (M4)
 
@@ -244,7 +249,7 @@ Invoke-RestMethod -Uri "http://localhost:3000/missions/$missionId/alerts" -Heade
 
 Files: `apps/simulation/src/anomalies.ts` contains contracts/injection/detection; `apps/api/src/anomalies.ts` handles authorized commands/history; `apps/worker/src/anomalies.ts` handles queue delivery, transactions and notification; `apps/api/src/realtime.ts` delivers room events. The Prisma schema/migration persists jobs/alerts; integration and smoke tests exercise the complete flow.
 
-Backend concepts: a **transactional outbox** saves work in the same database transaction as acceptance, so RabbitMQ can be unavailable without losing accepted requests. **Idempotent processing** lets retries reuse a job UUID without duplicating alerts. PostgreSQL, RabbitMQ and Redis do not share one transaction: notifications may repeat after a crash (deduplicate by alert ID), and live subscribers can miss them during disconnects. Unsent events for stopped/restarted missions are suppressed, while persisted alerts remain readable. Jobs/alerts have no automatic retention policy, and dead letters require manual inspection. M5 adds the dashboard and telemetry replay; JSONL logging remains M6.
+Backend concepts: a **transactional outbox** saves work in the same database transaction as acceptance, so RabbitMQ can be unavailable without losing accepted requests. **Idempotent processing** lets retries reuse a job UUID without duplicating alerts. PostgreSQL, RabbitMQ and Redis do not share one transaction: notifications may repeat after a crash (deduplicate by alert ID), and live subscribers can miss them during disconnects. Unsent events for stopped/restarted missions are suppressed, while persisted alerts remain readable. Jobs/alerts have no automatic retention policy, and dead letters require manual inspection. M5 adds the dashboard and telemetry replay; M6 adds the persistent JSONL event journal described below.
 
 ## M5 - Mission-control frontend and recorded telemetry
 
@@ -330,6 +335,85 @@ interpolation. The alert panel shows the latest 100 alerts, and the run picker
 shows the latest 100 recorded runs. Recordings have no automatic retention policy;
 mission deletion cascades to them. Mission status refreshes every five seconds.
 Role changes remain enforced immediately by the backend; UI role labels update
-on the next login. Redis delivery remains transient. The final browser visual and
-interactive review is manual because no browser-control tool is available in this
-session. JSONL logging and the final demo remain M6.
+on the next login. Redis delivery remains transient. M6 verified the main workflow
+in an actual Edge browser and captured desktop/mobile screenshots and a demo;
+see [demo evidence and reproduction](docs/DEMO.md) for coverage and limits.
+
+## M6 - Persistent event journal and final verification
+
+The worker appends schema-validated simulation events to daily
+`YYYY-MM-DD.jsonl` files on the named `aerqyn_event_logs` Docker volume at
+`/var/log/aerqyn`. Files use UTC dates and private `0600` permissions inside Linux.
+Host development uses `EVENT_LOG_DIR` (relative to the worker's current directory);
+the example value `../../.cache/events` puts logs in the repository's ignored
+cache when running `npm run dev:worker`. Without an override the default is
+`.cache/events` relative to the process directory. Compose always supplies its
+volume path. JSONL files and cache directories are excluded from Git and Docker
+build context.
+
+Each line is a JSON object with `version: 1`, an ISO UTC `timestamp`, a `type`,
+and event `data` where applicable:
+
+| Type                 | Data and timing                                                         |
+| -------------------- | ----------------------------------------------------------------------- |
+| `worker.started`     | No data; written before worker startup proceeds                         |
+| `telemetry.snapshot` | Normal telemetry newly committed for a five-second bucket or completion |
+| `anomaly.sample`     | Synthetic altered telemetry before notifying an eligible active run     |
+| `alert.detected`     | Persisted alert, including stable ID, before live alert publication     |
+
+The record timestamp is journal time; payload timestamps retain measurement/run
+time. JSON encoding escapes embedded newlines. Strict schemas reject extra
+fields; no request bodies, JWTs, passwords or arbitrary exception objects are
+passed to the journal. API access/error output remains separate console logging.
+
+Inspect or copy local journal files:
+
+```sh
+docker compose exec worker node --input-type=module -e "import { readdir } from 'node:fs/promises'; console.log(await readdir(process.env.EVENT_LOG_DIR))"
+docker compose cp worker:/var/log/aerqyn .cache/event-log-export
+```
+
+Create `.cache` first if it does not yet exist (`mkdir .cache`). The export is
+local and ignored. Mission deletion leaves journal records intact. There is no
+automatic retention policy; monitor disk usage and archive old closed daily files
+when needed. The application only appends; administrators can still modify files.
+
+The implementation lives in `apps/worker/src/journal.ts` and its tests, with
+call sites in `simulator.ts`, `anomalies.ts` and `index.ts`. `Dockerfile` creates a
+directory owned by the non-root worker; `compose.yaml` mounts the named volume.
+Integration tests verify snapshot deduplication and notification recovery after
+a journal failure. The journal verifier checks real container records and
+permissions, replaces only the worker container, then checks that all original
+bytes remain and startup appends another event:
+
+```sh
+npm run check
+npm run test:integration
+npm run smoke
+npm run smoke:simulation
+node scripts/verify-journal.mjs
+```
+
+Build first and run the live smoke check before the journal verifier so all
+event types exist. The last command briefly restarts the worker and should run
+between demonstrations. It retains the log volume and existing mission data.
+See [docs/DEMO.md](docs/DEMO.md) for optional browser-capture dependencies and
+commands; app setup does not require Playwright.
+
+Verified on 2026-10-17: lint, formatting, strict type checks, **95 default tests**
+(five infrastructure tests explicitly skipped), all four builds, **five real
+infrastructure integration tests**, compiled and live simulation smoke checks,
+full Compose build/start with six healthy services, journal persistence across
+container replacement, and the recorded browser walkthrough. Production
+dependency audit reported zero known vulnerabilities. The [security review](docs/SECURITY.md)
+details the reviewed boundaries and local-only assumptions.
+
+Two useful concepts are **append-only event records**, which preserve earlier
+lines instead of overwriting state, and **transaction boundaries**: a database
+commit and a filesystem append cannot be one atomic operation here. Snapshot
+logs can have gaps after a crash/write failure even though PostgreSQL replay is
+intact. Anomaly journal failure delays notification and leaves results eligible
+for retry; retries may repeat records, and stopping/restarting can suppress
+unnotified old-run events. This journal is not an exactly-once audit trail or the
+replay source. There is no per-write `fsync`, tamper protection, multi-worker
+logging coordination, or automatic backup/retention. Health remains liveness only.
