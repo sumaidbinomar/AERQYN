@@ -50,6 +50,15 @@ export async function tick(pool: Pool, redis: Redis, now = new Date()) {
             .publish(telemetryChannel, raw)
             .exec();
         }
+        // Keep at most one normal frame per five-second bucket, plus completion.
+        await connection.query(
+          `INSERT INTO "TelemetrySnapshot" ("missionId", "startedAt", "elapsedMs", frame)
+           SELECT $1, $2, $3, $4::jsonb WHERE NOT EXISTS (
+             SELECT 1 FROM "TelemetrySnapshot" WHERE "missionId" = $1 AND "startedAt" = $2
+             AND FLOOR("elapsedMs" / 5000.0) = FLOOR($3::integer / 5000.0)
+           ) OR $5 ON CONFLICT DO NOTHING`,
+          [id, mission.startedAt, state.elapsedMs, raw, completed],
+        );
         if (completed)
           await connection.query(
             'UPDATE "Mission" SET status = \'COMPLETED\' WHERE id = $1',

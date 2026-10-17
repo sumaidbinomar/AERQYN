@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { telemetrySchema, type Telemetry } from './index.js';
+import { telemetrySchema, type Telemetry } from './contracts.js';
 
 export const injectionSchema = z.strictObject({
   droneId: z.enum(['drone-1', 'drone-2', 'drone-3']),

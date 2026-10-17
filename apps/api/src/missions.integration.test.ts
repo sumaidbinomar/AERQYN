@@ -637,6 +637,12 @@ describe.skipIf(process.env.AERQYN_INTEGRATION !== '1')(
         await tick(pool, redis, new Date(+start + 350));
         await vi.waitFor(() => expect(events[0]).toHaveLength(2));
         expect(events[0]![1]!.elapsedMs).toBe(300);
+        // Repeated ticks in the same sampling bucket do not duplicate recordings.
+        const recorded = await observer.get(`/missions/${id}/replay`);
+        expect(recorded.status).toBe(200);
+        expect(recorded.body.data.runs).toEqual([start.toISOString()]);
+        expect(recorded.body.data.frames).toEqual([events[0]![0]]);
+
         await b
           .timeout(3000)
           .emitWithAck('mission:join', { missionId: otherId });
@@ -687,6 +693,21 @@ describe.skipIf(process.env.AERQYN_INTEGRATION !== '1')(
         await tick(pool, redis, new Date(+nextStart + 10000));
         await vi.waitFor(() => expect(events[0]).toHaveLength(3));
         expect(events[0]![2]!.status).toBe('COMPLETED');
+        const latestRun = await observer.get(`/missions/${id}/replay`);
+        expect(latestRun.body.data.runs).toEqual([
+          nextStart.toISOString(),
+          start.toISOString(),
+        ]);
+        expect(latestRun.body.data.frames).toEqual([events[0]![2]]);
+        const previousRun = await observer.get(
+          `/missions/${id}/replay?startedAt=${encodeURIComponent(start.toISOString())}`,
+        );
+        expect(previousRun.body.data.frames).toEqual([events[0]![0]]);
+        const missingRun = await observer.get(
+          `/missions/${id}/replay?startedAt=2020-01-01T00:00:00.000Z`,
+        );
+        expect(missingRun.body.data.frames).toEqual([]);
+
         expect(
           (await database.mission.findUniqueOrThrow({ where: { id } })).status,
         ).toBe('COMPLETED');

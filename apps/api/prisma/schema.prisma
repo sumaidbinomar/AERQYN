@@ -36,6 +36,7 @@ model Mission {
   startedAt   DateTime?     @db.Timestamptz(3)
   anomalyJobs AnomalyJob[]
   alerts      Alert[]
+  snapshots   TelemetrySnapshot[]
 }
 
 model AnomalyJob {
@@ -68,4 +69,13 @@ model Alert {
 
   @@unique([jobId, droneId, type])
   @@index([missionId, createdAt, id])
+}
+
+model TelemetrySnapshot {
+  missionId String @db.Uuid
+  mission Mission @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  startedAt DateTime @db.Timestamptz(3)
+  elapsedMs Int
+  frame Json
+  @@id([missionId, startedAt, elapsedMs])
 }

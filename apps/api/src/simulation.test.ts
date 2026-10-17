@@ -98,3 +98,13 @@ it('validates alert pagination and reports missing missions', async () => {
   find.mockResolvedValue(null);
   expect((await client.get(`/missions/${id}/alerts`)).status).toBe(404);
 });
+it('protects replay and validates its run selector', async () => {
+  expect((await request(app).get(`/missions/${id}/replay`)).status).toBe(401);
+  expect((await client.get('/missions/bad/replay')).status).toBe(400);
+  expect(
+    (await client.get(`/missions/${id}/replay?startedAt=bad`)).status,
+  ).toBe(400);
+  expect((await client.get(`/missions/${id}/replay?extra=1`)).status).toBe(400);
+  find.mockResolvedValue(null);
+  expect((await client.get(`/missions/${id}/replay`)).status).toBe(404);
+});

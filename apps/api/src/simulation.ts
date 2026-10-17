@@ -94,5 +94,44 @@ export function simulationRoutes(database: PrismaClient, redis?: Redis) {
       .set('Cache-Control', 'no-store')
       .json({ data: { count: await viewerCount(redis, id) } });
   });
+  router.get('/:id/replay', async (request, response) => {
+    const id = missionId(request.params.id);
+    const query = z
+      .strictObject({ startedAt: z.iso.datetime().optional() })
+      .safeParse(request.query);
+    if (!query.success)
+      throw new ApiError(
+        400,
+        'VALIDATION_ERROR',
+        'Provide only an optional startedAt timestamp',
+      );
+    const mission = await database.mission.findUnique({ where: { id } });
+    if (!mission) throw new ApiError(404, 'NOT_FOUND', 'Mission not found');
+    const runs = await database.telemetrySnapshot.findMany({
+      where: { missionId: id },
+      distinct: ['startedAt'],
+      select: { startedAt: true },
+      orderBy: { startedAt: 'desc' },
+      take: 100,
+    });
+    const startedAt = query.data.startedAt
+      ? new Date(query.data.startedAt)
+      : runs[0]?.startedAt;
+    const snapshots = startedAt
+      ? await database.telemetrySnapshot.findMany({
+          where: { missionId: id, startedAt },
+          orderBy: { elapsedMs: 'asc' },
+          take: 722,
+        })
+      : [];
+    response.set('Cache-Control', 'no-store').json({
+      data: {
+        runs: runs.map((run) => run.startedAt.toISOString()),
+        frames: snapshots.map((snapshot) =>
+          telemetrySchema.parse(snapshot.frame),
+        ),
+      },
+    });
+  });
   return router;
 }

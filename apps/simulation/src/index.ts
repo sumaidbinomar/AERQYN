@@ -1,10 +1,12 @@
 import { z } from 'zod';
+import { settingsSchema, type Telemetry } from './contracts.js';
+export {
+  settingsSchema,
+  telemetrySchema,
+  type Telemetry,
+} from './contracts.js';
 import { createClient } from 'redis';
 
-export const settingsSchema = z.strictObject({
-  durationSeconds: z.number().int().min(10).max(3600).default(300),
-  telemetryIntervalMs: z.number().int().min(100).max(5000).default(1000),
-});
 export const redisUrlSchema = z
   .url()
   .refine((value) => ['redis:', 'rediss:'].includes(new URL(value).protocol));
@@ -21,27 +23,6 @@ export type Redis = ReturnType<typeof connectRedis>;
 export const telemetryChannel = 'aerqyn:telemetry';
 export const stateKey = (id: string) => `aerqyn:mission:${id}:state`;
 export const viewersKey = (id: string) => `aerqyn:mission:${id}:viewers`;
-export const telemetrySchema = z.strictObject({
-  missionId: z.uuid(),
-  startedAt: z.iso.datetime(),
-  timestamp: z.iso.datetime(),
-  elapsedMs: z.number().nonnegative(),
-  status: z.enum(['RUNNING', 'COMPLETED']),
-  drones: z
-    .array(
-      z.strictObject({
-        id: z.enum(['drone-1', 'drone-2', 'drone-3']),
-        x: z.number().min(-1000).max(1000),
-        y: z.number().min(-1000).max(1000),
-        speed: z.number().nonnegative(),
-        battery: z.number().min(0).max(100),
-        connectionStatus: z.enum(['CONNECTED', 'DISCONNECTED']),
-      }),
-    )
-    .length(3),
-});
-export type Telemetry = z.infer<typeof telemetrySchema>;
-
 // Three offset square routes in a synthetic 100 x 100 field; speed is field units/s.
 export function simulate(
   missionId: string,
