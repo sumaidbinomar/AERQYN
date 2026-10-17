@@ -1,0 +1,24 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum MissionStatus {
+  DRAFT
+  RUNNING
+  STOPPED
+  COMPLETED
+}
+
+model Mission {
+  id         String        @id @default(uuid()) @db.Uuid
+  name       String        @db.VarChar(100)
+  description String       @default("") @db.VarChar(2000)
+  status     MissionStatus @default(DRAFT)
+  createdAt  DateTime      @default(now()) @db.Timestamptz(3)
+  settings   Json
+}

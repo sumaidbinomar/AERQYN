@@ -1,4 +1,5 @@
 FROM node:24-bookworm-slim AS build
+RUN apt-get update && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY apps/api/package.json apps/api/package.json
@@ -13,7 +14,7 @@ RUN npm run build
 FROM build AS api
 USER node
 EXPOSE 3000
-CMD ["node", "apps/api/dist/index.js"]
+CMD ["sh", "-c", "npm run db:migrate --workspace @aerqyn/api && node apps/api/dist/index.js"]
 
 FROM build AS worker
 USER node
