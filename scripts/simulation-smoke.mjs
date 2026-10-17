@@ -76,6 +76,10 @@ try {
   const b = await connect(observer, id, 'polling');
   const c = await connect(observer, other, 'websocket');
   const frames = [[], [], []];
+  const alerts = [[], [], []];
+  [a, b, c].forEach((socket, index) =>
+    socket.on('alert', (alert) => alerts[index].push(alert)),
+  );
   [a, b, c].forEach((socket, index) =>
     socket.on('telemetry', (frame) => frames[index].push(frame)),
   );
@@ -94,6 +98,41 @@ try {
   assert.equal(
     (await api(`/missions/${id}/telemetry`, observer)).data.missionId,
     id,
+  );
+  const command = { droneId: 'drone-2', type: 'GPS_JUMP' };
+  assert.equal(
+    (await api(`/missions/${id}/anomalies`, undefined, 'POST', command)).status,
+    401,
+  );
+  assert.equal(
+    (await api(`/missions/${id}/anomalies`, observer, 'POST', command)).status,
+    403,
+  );
+  for (const type of ['GPS_JUMP', 'BATTERY_DROP', 'COMMUNICATION_LOSS']) {
+    assert.equal(
+      (
+        await api(`/missions/${id}/anomalies`, researcher, 'POST', {
+          ...command,
+          type,
+        })
+      ).status,
+      202,
+    );
+  }
+  await waitUntil(() => alerts[0].length >= 3 && alerts[1].length >= 3);
+  assert.equal(alerts[2].length, 0);
+  assert.equal(new Set(alerts[0].map((alert) => alert.type)).size, 3);
+  const history = await api(`/missions/${id}/alerts`, observer);
+  assert.equal(history.status, 200);
+  assert.equal(history.data.length, 3);
+  assert.deepEqual(
+    new Set(history.data.map((alert) => alert.id)),
+    new Set(alerts[0].map((alert) => alert.id)),
+  );
+  assert(
+    frames[0].some(
+      (frame) => frame.drones[1].connectionStatus === 'DISCONNECTED',
+    ),
   );
   assert.equal(
     (await api(`/missions/${id}/stop`, researcher, 'POST')).status,
@@ -118,7 +157,7 @@ try {
       (await api(`/missions/${id}/viewers`, observer)).data.count === 1,
   );
   console.info(
-    'Live simulation smoke passed: proxied WebSocket and polling clients, room isolation, RBAC, movement, cache, stop/restart/completion, and viewer cleanup.',
+    'Live simulation/anomaly smoke passed: proxied WebSocket and polling clients, room isolation, RBAC, movement, cache, three anomaly types, durable alerts, stop/restart/completion, and viewer cleanup.',
   );
 } finally {
   sockets.forEach((socket) => socket.disconnect());

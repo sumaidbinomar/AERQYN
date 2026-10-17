@@ -12,6 +12,7 @@ import type { PrismaClient } from './generated/prisma/client.js';
 import { createAuth } from './auth.js';
 import { ApiError } from './errors.js';
 import { latestTelemetry } from './simulation.js';
+import { alertChannel, alertSchema } from '@aerqyn/simulation/anomalies';
 
 const joinSchema = z.strictObject({ missionId: z.uuid() });
 type Reply = (result: unknown) => void;
@@ -131,9 +132,15 @@ export function createRealtime(
       enqueue(leave);
     });
   });
-  async function receive(raw: string) {
+  async function receive(
+    raw: string,
+    event: 'telemetry' | 'alert' = 'telemetry',
+  ) {
     try {
-      const state = telemetrySchema.parse(JSON.parse(raw));
+      const state =
+        event === 'telemetry'
+          ? telemetrySchema.parse(JSON.parse(raw))
+          : alertSchema.parse(JSON.parse(raw));
       const mission = await database.mission.findUnique({
         where: { id: state.missionId },
       });
@@ -151,18 +158,22 @@ export function createRealtime(
           socket.disconnect(true);
           continue;
         }
-        socket.emit('telemetry', state);
+        socket.emit(event, state);
       }
     } catch {
-      console.error('Telemetry delivery unavailable');
+      console.error('Realtime delivery unavailable');
     }
   }
   return {
     io,
-    start: () =>
-      subscriber.subscribe(telemetryChannel, (raw) => {
+    start: async () => {
+      await subscriber.subscribe(telemetryChannel, (raw) => {
         void receive(raw);
-      }),
+      });
+      await subscriber.subscribe(alertChannel, (raw) => {
+        void receive(raw, 'alert');
+      });
+    },
     close: async () => {
       await new Promise<void>((resolve) => io.close(() => resolve()));
       // Presence cleanup runs on the serialized per-socket queues; TTL covers process failure.

@@ -25,6 +25,12 @@ import { createRealtime } from './realtime.js';
 import { tick } from '../../worker/src/simulator.js';
 import { vi } from 'vitest';
 import { SignJWT } from 'jose';
+import { connect as connectRabbit } from 'amqplib';
+import {
+  analyzeJob,
+  createAnomalyPipeline,
+} from '../../worker/src/anomalies.js';
+import { alertChannel, type Alert } from '@aerqyn/simulation/anomalies';
 
 const seedEnvironment = {
   DEMO_RESEARCHER_PASSWORD: 'integration-researcher-password',
@@ -237,6 +243,256 @@ describe.skipIf(process.env.AERQYN_INTEGRATION !== '1')(
       ).toBe(404);
       expect((await request(app).get('/missions')).body.data).toEqual([]);
     });
+
+    it('queues synthetic anomalies, detects once, persists and broadcasts only to authorized mission viewers', async () => {
+      if (!process.env.RABBITMQ_URL)
+        throw new Error('RABBITMQ_URL is required');
+      const redis = connectRedis(
+        process.env.REDIS_URL ?? 'redis://127.0.0.1:6379',
+      );
+      const subscriber = connectRedis(
+        process.env.REDIS_URL ?? 'redis://127.0.0.1:6379',
+      );
+      const pool = new pg.Pool({
+        connectionString: process.env.DATABASE_URL,
+        options: `-c search_path=${schema}`,
+      });
+      const queue = `aerqyn.test.${randomUUID()}`;
+      let pipeline = createAnomalyPipeline(
+        pool,
+        redis,
+        process.env.RABBITMQ_URL,
+        queue,
+      );
+      const broker = await connectRabbit(process.env.RABBITMQ_URL);
+      const brokerChannel = await broker.createConfirmChannel();
+      const server = createServer(createApp(database, testSecret, redis));
+      const realtime = createRealtime(
+        server,
+        database,
+        testSecret,
+        redis,
+        subscriber,
+      );
+      const ids: string[] = [];
+      const sockets: Socket[] = [];
+      try {
+        await Promise.all([redis.connect(), subscriber.connect()]);
+        await realtime.start();
+        server.listen(0, '127.0.0.1');
+        await once(server, 'listening');
+        const address = server.address();
+        if (!address || typeof address === 'string')
+          throw new Error('Missing port');
+        const login = await rawRequest(app).post('/auth/login').send({
+          email: 'observer@aerqyn.local',
+          password: seedEnvironment.DEMO_OBSERVER_PASSWORD,
+        });
+        const observer = missionClient(app, login.body.data.accessToken);
+        for (let index = 0; index < 2; index++) {
+          const created = await request(app)
+            .post('/missions')
+            .send({ name: `Anomaly ${index}` });
+          ids.push(created.body.data.id);
+        }
+        const [id, otherId] = ids as [string, string];
+        const command = { droneId: 'drone-1', type: 'GPS_JUMP' };
+        expect(
+          (await request(app).post(`/missions/${id}/anomalies`).send(command))
+            .status,
+        ).toBe(409);
+        expect(
+          (
+            await request(app)
+              .post(`/missions/${randomUUID()}/anomalies`)
+              .send(command)
+          ).status,
+        ).toBe(404);
+        expect((await request(app).post(`/missions/${id}/start`)).status).toBe(
+          200,
+        );
+        const received: Alert[][] = [[], [], []];
+        const frames: Telemetry[] = [];
+        for (const [index, accessToken] of [
+          token,
+          login.body.data.accessToken,
+          token,
+        ].entries()) {
+          const socket = connectSocket(`http://127.0.0.1:${address.port}`, {
+            auth: { token: accessToken },
+            transports: ['websocket'],
+            reconnection: false,
+          });
+          sockets.push(socket);
+          await new Promise<void>((resolve, reject) => {
+            socket.once('connect', resolve);
+            socket.once('connect_error', reject);
+          });
+          socket.on('alert', (event: Alert) => received[index]!.push(event));
+          socket.on('telemetry', (event: Telemetry) => {
+            if (index === 0) frames.push(event);
+          });
+          expect(
+            await socket.timeout(3000).emitWithAck('mission:join', {
+              missionId: index === 2 ? otherId : id,
+            }),
+          ).toHaveProperty('data');
+        }
+        const jobs: string[] = [];
+        for (const type of ['GPS_JUMP', 'BATTERY_DROP', 'COMMUNICATION_LOSS']) {
+          const result = await request(app)
+            .post(`/missions/${id}/anomalies`)
+            .send({ ...command, type });
+          expect(result.status).toBe(202);
+          jobs.push(result.body.data.id);
+        }
+        // Acceptance is durable before any broker connection or publication.
+        expect(
+          await database.anomalyJob.count({
+            where: { missionId: id, processedAt: null },
+          }),
+        ).toBe(3);
+        const unavailable = createAnomalyPipeline(
+          pool,
+          redis,
+          'amqp://unused:unused@127.0.0.1:1',
+          queue,
+        );
+        await expect(unavailable.pump()).rejects.toThrow();
+        await unavailable.close();
+        expect(
+          await database.anomalyJob.count({
+            where: { missionId: id, processedAt: null },
+          }),
+        ).toBe(3);
+        await pipeline.pump();
+        await vi.waitFor(
+          async () =>
+            expect(
+              await database.alert.count({ where: { missionId: id } }),
+            ).toBe(3),
+          { timeout: 5000 },
+        );
+        // Simulate worker restart between durable processing and notification.
+        await pipeline.close();
+        pipeline = createAnomalyPipeline(
+          pool,
+          redis,
+          process.env.RABBITMQ_URL,
+          queue,
+        );
+        await pipeline.pump();
+        await vi.waitFor(
+          () => {
+            expect(received[0]).toHaveLength(3);
+            expect(received[1]).toHaveLength(3);
+          },
+          { timeout: 5000 },
+        );
+        expect(received[2]).toHaveLength(0);
+        expect(frames).toHaveLength(3);
+        expect(
+          frames.some(
+            (frame) => frame.drones[0]!.connectionStatus === 'DISCONNECTED',
+          ),
+        ).toBe(true);
+        expect(frames.some((frame) => frame.drones[0]!.x > 100)).toBe(true);
+        expect(frames.some((frame) => frame.drones[0]!.battery < 70)).toBe(
+          true,
+        );
+        expect(new Set(received[0]!.map((alert) => alert.type)).size).toBe(3);
+        await Promise.all([
+          analyzeJob(pool, jobs[0]!),
+          analyzeJob(pool, jobs[0]!),
+        ]);
+        brokerChannel.sendToQueue(
+          queue,
+          Buffer.from(JSON.stringify({ jobId: jobs[0] })),
+          { persistent: true },
+        );
+        brokerChannel.sendToQueue(queue, Buffer.from('invalid-json'), {
+          persistent: true,
+        });
+        await brokerChannel.waitForConfirms();
+        await vi.waitFor(
+          async () =>
+            expect(
+              (await brokerChannel.checkQueue(`${queue}.dead`)).messageCount,
+            ).toBe(1),
+          { timeout: 5000 },
+        );
+        expect(await database.alert.count({ where: { missionId: id } })).toBe(
+          3,
+        );
+        const history = await observer.get(`/missions/${id}/alerts?limit=2`);
+        expect(history.status).toBe(200);
+        expect(history.body.data).toHaveLength(2);
+        expect(history.body.data[0]).not.toHaveProperty('jobId');
+        expect(
+          (await observer.get(`/missions/${id}/alerts?offset=2`)).body.data,
+        ).toHaveLength(1);
+        expect(
+          (await observer.get(`/missions/${otherId}/alerts`)).body.data,
+        ).toEqual([]);
+        // Pending old-run commands cannot affect a restarted mission.
+        const stale = await request(app)
+          .post(`/missions/${id}/anomalies`)
+          .send(command);
+        await request(app).post(`/missions/${id}/stop`);
+        await request(app).post(`/missions/${id}/start`);
+        await analyzeJob(pool, stale.body.data.id);
+        expect(
+          (
+            await database.anomalyJob.findUniqueOrThrow({
+              where: { id: stale.body.data.id },
+            })
+          ).outcome,
+        ).toBe('STALE');
+        // Stale alert publications are ignored by the API too.
+        await redis.publish(alertChannel, JSON.stringify(received[0]![0]));
+        await pipeline.pump();
+        // A malformed stored payload terminates rather than poisoning the retry loop.
+        const mission = await database.mission.findUniqueOrThrow({
+          where: { id },
+        });
+        const invalid = await database.anomalyJob.create({
+          data: { missionId: id, startedAt: mission.startedAt!, payload: {} },
+        });
+        await analyzeJob(pool, invalid.id);
+        expect(
+          (
+            await database.anomalyJob.findUniqueOrThrow({
+              where: { id: invalid.id },
+            })
+          ).outcome,
+        ).toBe('INVALID');
+        expect(await database.alert.count({ where: { missionId: id } })).toBe(
+          3,
+        );
+        await vi.waitFor(
+          async () =>
+            expect((await brokerChannel.checkQueue(queue)).messageCount).toBe(
+              0,
+            ),
+          { timeout: 5000 },
+        );
+        expect(received[0]).toHaveLength(3);
+      } finally {
+        sockets.forEach((socket) => socket.disconnect());
+        await pipeline.close();
+        await realtime.close();
+        await brokerChannel.deleteQueue(queue);
+        await brokerChannel.deleteQueue(`${queue}.dead`);
+        await broker.close();
+        await pool.end();
+        for (const id of ids) {
+          await redis.del([stateKey(id), viewersKey(id)]);
+          await database.mission.deleteMany({ where: { id } });
+        }
+        redis.destroy();
+        subscriber.destroy();
+      }
+    }, 30000);
 
     it('streams worker telemetry to authenticated mission rooms, caches state, and tracks viewers', async () => {
       const redis = connectRedis(

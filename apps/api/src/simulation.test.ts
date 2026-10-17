@@ -66,3 +66,35 @@ it('returns 404 for missing missions and 409 for invalid transitions', async () 
 it('returns 503 when Redis is unavailable', async () => {
   expect((await client.get(`/missions/${id}/telemetry`)).status).toBe(503);
 });
+it('protects anomaly injection and alert history', async () => {
+  expect((await request(app).post(`/missions/${id}/anomalies`)).status).toBe(
+    401,
+  );
+  expect((await request(app).get(`/missions/${id}/alerts`)).status).toBe(401);
+  lookup.mockResolvedValue({ ...user, role: 'OBSERVER' });
+  expect(
+    (
+      await client
+        .post(`/missions/${id}/anomalies`)
+        .send({ droneId: 'drone-1', type: 'GPS_JUMP' })
+    ).status,
+  ).toBe(403);
+});
+it.each([
+  {},
+  { droneId: 'drone-4', type: 'GPS_JUMP' },
+  { droneId: 'drone-1', type: 'REAL_ATTACK' },
+  { droneId: 'drone-1', type: 'GPS_JUMP', x: 100000 },
+])('rejects invalid anomaly commands %j', async (body) => {
+  expect(
+    (await client.post(`/missions/${id}/anomalies`).send(body)).status,
+  ).toBe(400);
+});
+it('validates alert pagination and reports missing missions', async () => {
+  expect((await client.get(`/missions/${id}/alerts?limit=101`)).status).toBe(
+    400,
+  );
+  expect((await client.get(`/missions/${id}/alerts?extra=1`)).status).toBe(400);
+  find.mockResolvedValue(null);
+  expect((await client.get(`/missions/${id}/alerts`)).status).toBe(404);
+});

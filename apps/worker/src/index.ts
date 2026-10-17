@@ -3,6 +3,7 @@ import { z } from 'zod';
 import pg from 'pg';
 import { connectRedis, redisUrlSchema } from '@aerqyn/simulation';
 import { tick } from './simulator.js';
+import { createAnomalyPipeline, rabbitUrlSchema } from './anomalies.js';
 
 const config = z
   .object({
@@ -13,6 +14,7 @@ const config = z
         ['postgres:', 'postgresql:'].includes(new URL(value).protocol),
       ),
     REDIS_URL: redisUrlSchema.default('redis://127.0.0.1:6379'),
+    RABBITMQ_URL: rabbitUrlSchema,
   })
   .safeParse(process.env);
 
@@ -35,18 +37,24 @@ const pool = new pg.Pool({
 });
 pool.on('error', () => console.error('Worker database connection unavailable'));
 const redis = connectRedis(config.data.REDIS_URL);
+const anomalies = createAnomalyPipeline(pool, redis, config.data.RABBITMQ_URL);
 void redis
   .connect()
   .catch(() => console.error('Worker Redis startup unavailable'));
 let stopping = false;
 let pending = Promise.resolve();
+let nextAnalysis = 0;
 function schedule() {
   pending = (async () => {
     if (redis.isReady) {
       try {
         await tick(pool, redis);
+        if (Date.now() >= nextAnalysis) {
+          nextAnalysis = Date.now() + 1000;
+          await anomalies.pump();
+        }
       } catch {
-        console.error('Simulation tick failed; retrying');
+        console.error('Worker cycle failed; retrying');
       }
     }
     if (!stopping) timer = setTimeout(schedule, 100);
@@ -84,6 +92,7 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     server.close(() => {
       void pending
         .then(async () => {
+          await anomalies.close();
           redis.destroy();
           await pool.end();
           process.exit(0);

@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@aerqyn/simulation": "^0.0.0",
+    "amqplib": "^2.2.0",
     "pg": "^8.23.1",
     "redis": "^6.3.0",
     "zod": "^4.1.0"

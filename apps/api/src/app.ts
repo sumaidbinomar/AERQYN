@@ -5,6 +5,7 @@ import { missionRoutes } from './missions.js';
 import { createAuth } from './auth.js';
 import { simulationRoutes } from './simulation.js';
 import type { Redis } from '@aerqyn/simulation';
+import { anomalyRoutes } from './anomalies.js';
 
 export function createApp(
   database: PrismaClient,
@@ -24,6 +25,7 @@ export function createApp(
   app.use(
     '/missions',
     auth.authenticate,
+    anomalyRoutes(database),
     simulationRoutes(database, redis),
     missionRoutes(database),
   );
