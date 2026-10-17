@@ -1,0 +1,1 @@
+ALTER TABLE "Mission" ADD COLUMN "startedAt" TIMESTAMPTZ(3);

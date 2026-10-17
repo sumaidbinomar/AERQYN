@@ -9,7 +9,7 @@
     "db:dev": "node --env-file-if-exists=../../.env ../../node_modules/prisma/build/index.js migrate dev",
     "prebuild": "npm run db:generate",
     "pretypecheck": "npm run db:generate",
-    "predev": "npm run db:generate",
+    "predev": "npm run db:generate && npm run build --workspace @aerqyn/simulation",
     "dev": "node --env-file-if-exists=../../.env --import tsx --watch src/index.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -17,11 +17,14 @@
     "db:seed": "node --env-file-if-exists=../../.env --import tsx src/seed-cli.ts"
   },
   "dependencies": {
+    "@aerqyn/simulation": "^0.0.0",
     "@prisma/adapter-pg": "^7.10.1",
     "@prisma/client": "^7.10.1",
     "express": "^5.1.0",
     "express-rate-limit": "^8.7.1",
     "jose": "^6.2.12",
+    "redis": "^6.3.0",
+    "socket.io": "^4.8.4",
     "zod": "^4.1.0"
   },
   "devDependencies": {

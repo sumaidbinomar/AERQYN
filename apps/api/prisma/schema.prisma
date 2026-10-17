@@ -33,4 +33,5 @@ model Mission {
   status      MissionStatus @default(DRAFT)
   createdAt   DateTime      @default(now()) @db.Timestamptz(3)
   settings    Json
+  startedAt   DateTime?     @db.Timestamptz(3)
 }

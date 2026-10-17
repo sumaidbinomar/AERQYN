@@ -4,12 +4,16 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "predev": "npm run build --workspace @aerqyn/simulation",
     "dev": "node --env-file-if-exists=../../.env --import tsx --watch src/index.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "start": "node --env-file-if-exists=../../.env dist/index.js"
   },
   "dependencies": {
+    "@aerqyn/simulation": "^0.0.0",
+    "pg": "^8.23.1",
+    "redis": "^6.3.0",
     "zod": "^4.1.0"
   }
 }
