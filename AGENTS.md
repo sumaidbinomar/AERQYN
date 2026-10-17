@@ -37,13 +37,14 @@ Read PROJECT.md and TASKS.md before implementing any milestone.
 ## Git Workflow
 
 - Work in small logical milestones.
+- Automatically create a small local commit after each completed logical change in every milestone. This is standing authorization; do not wait until the milestone ends or ask the user to repeat the request.
 - Before committing, review the changed files.
 - Run available lint, type-check and test commands.
 - Never commit .env files, secrets, node_modules or generated build artifacts.
 - Use Conventional Commit messages such as feat:, fix:, test:, docs: and chore:.
 - Do not amend commits, force push or rewrite history without permission.
-- Do not automatically commit or push unless explicitly requested.
-- At the end of each milestone, propose a suitable commit message.
+- Push to GitHub only after the user's explicit approval for that push. Authorization to implement a milestone or make local commits does not authorize a push.
+- At the end of each milestone, report the local commits created and whether any changes remain uncommitted.
 
 ## Learning Workflow
 
