@@ -22,6 +22,7 @@ export const errorHandler: ErrorRequestHandler = (
     return;
   }
   if (error instanceof ApiError) {
+    if (error.status === 401) response.set('WWW-Authenticate', 'Bearer');
     response
       .status(error.status)
       .json({ error: { code: error.code, message: error.message } });

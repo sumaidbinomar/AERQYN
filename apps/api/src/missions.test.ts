@@ -1,4 +1,9 @@
-import request from 'supertest';
+import {
+  missionClient,
+  testSecret,
+  testToken,
+  testUserId,
+} from './test-client.js';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { createApp } from './app.js';
 import { createDatabase } from './database.js';
@@ -7,7 +12,15 @@ import { configSchema } from './config.js';
 const database = createDatabase(
   'postgresql://unused:unused@127.0.0.1:1/unused',
 );
-const app = createApp(database);
+const app = createApp(database, testSecret);
+const token = await testToken();
+const request = (target: typeof app) => missionClient(target, token);
+vi.spyOn(database.user, 'findUnique').mockResolvedValue({
+  id: testUserId,
+  email: 'researcher@test.local',
+  passwordHash: '',
+  role: 'RESEARCHER',
+});
 const id = '00000000-0000-4000-8000-000000000001';
 afterAll(() => database.$disconnect());
 
@@ -99,7 +112,10 @@ describe('Mission input validation', () => {
   it.each([undefined, 'https://localhost/db', 'postgresql://localhost'])(
     'rejects invalid database configuration %s',
     (DATABASE_URL) => {
-      expect(configSchema.safeParse({ DATABASE_URL }).success).toBe(false);
+      expect(
+        configSchema.safeParse({ DATABASE_URL, JWT_SECRET: testSecret })
+          .success,
+      ).toBe(false);
     },
   );
 });

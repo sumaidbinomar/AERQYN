@@ -65,10 +65,15 @@ try {
   const apiPort = await freePort();
   const api = start(['apps/api/dist/index.js'], {
     API_PORT: String(apiPort),
+    JWT_SECRET: 'smoke-only-secret-01234567890123456789',
     DATABASE_URL: 'postgresql://unused:unused@127.0.0.1:1/unused',
   });
   const apiResponse = await waitFor(`http://127.0.0.1:${apiPort}/health`, api);
   assert.deepEqual(await apiResponse.json(), { status: 'ok', service: 'api' });
+  assert.equal(
+    (await fetch(`http://127.0.0.1:${apiPort}/missions`)).status,
+    401,
+  );
 
   const workerPort = await freePort();
   const worker = start(['apps/worker/dist/index.js'], {
@@ -108,6 +113,7 @@ try {
     status: 'ok',
     service: 'api',
   });
+  assert.equal((await fetch(`${webUrl}/api/missions`)).status, 401);
 
   for (const [service, variable] of [
     ['api', 'API_PORT'],
@@ -118,7 +124,12 @@ try {
       [`apps/${service}/dist/index.js`],
       {
         cwd: root,
-        env: { ...process.env, [variable]: 'invalid' },
+        env: {
+          ...process.env,
+          DATABASE_URL: 'postgresql://unused:unused@127.0.0.1:1/unused',
+          JWT_SECRET: 'smoke-only-secret-01234567890123456789',
+          [variable]: 'invalid',
+        },
         encoding: 'utf8',
         timeout: 5000,
         windowsHide: true,
@@ -128,7 +139,7 @@ try {
     assert.match(result.stderr, /Invalid .* configuration/);
   }
   console.info(
-    'Smoke checks passed: API, worker, web preview, API proxy, and invalid port rejection.',
+    'Smoke checks passed: API, worker, web preview, API proxy, protected missions, and invalid port rejection.',
   );
 } finally {
   for (const { child } of children) child.kill();

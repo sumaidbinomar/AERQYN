@@ -2,9 +2,11 @@ import express from 'express';
 import type { PrismaClient } from './generated/prisma/client.js';
 import { errorHandler } from './errors.js';
 import { missionRoutes } from './missions.js';
+import { createAuth } from './auth.js';
 
-export function createApp(database: PrismaClient) {
+export function createApp(database: PrismaClient, jwtSecret: string) {
   const app = express();
+  const auth = createAuth(database, jwtSecret);
   app.disable('x-powered-by');
 
   app.get('/health', (_request, response) => {
@@ -12,7 +14,8 @@ export function createApp(database: PrismaClient) {
   });
 
   app.use(express.json({ limit: '16kb' }));
-  app.use('/missions', missionRoutes(database));
+  app.use('/auth', auth.router);
+  app.use('/missions', auth.authenticate, missionRoutes(database));
 
   app.use((_request, response) => {
     response

@@ -61,6 +61,11 @@ services:
     init: true
     environment:
       API_PORT: '3000'
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env (at least 32 random characters)}
+      DEMO_RESEARCHER_EMAIL: ${DEMO_RESEARCHER_EMAIL:-researcher@aerqyn.local}
+      DEMO_RESEARCHER_PASSWORD: ${DEMO_RESEARCHER_PASSWORD:?Set DEMO_RESEARCHER_PASSWORD in .env}
+      DEMO_OBSERVER_EMAIL: ${DEMO_OBSERVER_EMAIL:-observer@aerqyn.local}
+      DEMO_OBSERVER_PASSWORD: ${DEMO_OBSERVER_PASSWORD:?Set DEMO_OBSERVER_PASSWORD in .env}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
     ports:
       - '127.0.0.1:${API_PORT:-3000}:3000'

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import type { PrismaClient } from './generated/prisma/client.js';
 import { ApiError } from './errors.js';
+import { requireRole } from './auth.js';
 
 const settingsSchema = z.strictObject({
   durationSeconds: z.number().int().min(10).max(3600).default(300),
@@ -44,7 +45,7 @@ function parse<T>(schema: z.ZodType<T>, value: unknown): T {
 
 export function missionRoutes(database: PrismaClient) {
   const router = Router();
-  router.post('/', async (request, response) => {
+  router.post('/', requireRole('RESEARCHER'), async (request, response) => {
     const data = parse(createSchema, request.body);
     const mission = await database.mission.create({ data });
     response
@@ -67,7 +68,7 @@ export function missionRoutes(database: PrismaClient) {
     if (!mission) throw new ApiError(404, 'NOT_FOUND', 'Mission not found');
     response.json({ data: mission });
   });
-  router.patch('/:id', async (request, response) => {
+  router.patch('/:id', requireRole('RESEARCHER'), async (request, response) => {
     const id = parse(idSchema, request.params.id);
     const data = parse(updateSchema, request.body);
     const mission = await database.mission.update({
@@ -82,10 +83,14 @@ export function missionRoutes(database: PrismaClient) {
     });
     response.json({ data: mission });
   });
-  router.delete('/:id', async (request, response) => {
-    const id = parse(idSchema, request.params.id);
-    await database.mission.delete({ where: { id } });
-    response.status(204).end();
-  });
+  router.delete(
+    '/:id',
+    requireRole('RESEARCHER'),
+    async (request, response) => {
+      const id = parse(idSchema, request.params.id);
+      await database.mission.delete({ where: { id } });
+      response.status(204).end();
+    },
+  );
   return router;
 }

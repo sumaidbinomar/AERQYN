@@ -13,7 +13,7 @@ if (!config.success) {
 }
 
 const database = createDatabase(config.data.DATABASE_URL);
-const server = createApp(database).listen(
+const server = createApp(database, config.data.JWT_SECRET).listen(
   config.data.API_PORT,
   '0.0.0.0',
   () => {

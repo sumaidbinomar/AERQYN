@@ -1,18 +1,28 @@
 import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import request from 'supertest';
+import rawRequest from 'supertest';
+import { missionClient, testSecret } from './test-client.js';
+import { seedDemoUsers } from './seed.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from './app.js';
 import { createDatabase } from './database.js';
+import { verifyPassword } from './passwords.js';
+
+const seedEnvironment = {
+  DEMO_RESEARCHER_PASSWORD: 'integration-researcher-password',
+  DEMO_OBSERVER_PASSWORD: 'integration-observer-password',
+};
 
 describe.skipIf(process.env.AERQYN_INTEGRATION !== '1')(
-  'Mission CRUD with PostgreSQL',
+  'Authenticated mission CRUD with PostgreSQL',
   () => {
-    const schema = `m1_test_${randomUUID().replaceAll('-', '')}`;
+    const schema = `m2_test_${randomUUID().replaceAll('-', '')}`;
     let database: ReturnType<typeof createDatabase>;
     let admin: ReturnType<typeof createDatabase>;
     let app: ReturnType<typeof createApp>;
+    let token: string;
+    const request = (target: typeof app) => missionClient(target, token);
 
     beforeAll(async () => {
       if (!process.env.DATABASE_URL)
@@ -47,7 +57,14 @@ describe.skipIf(process.env.AERQYN_INTEGRATION !== '1')(
           'Test schema migration failed; run db:migrate to diagnose',
         );
       database = createDatabase(url.href);
-      app = createApp(database);
+      app = createApp(database, testSecret);
+      await seedDemoUsers(database, seedEnvironment);
+      const login = await rawRequest(app).post('/auth/login').send({
+        email: 'researcher@aerqyn.local',
+        password: seedEnvironment.DEMO_RESEARCHER_PASSWORD,
+      });
+      expect(login.status).toBe(200);
+      token = login.body.data.accessToken;
     }, 75000);
 
     afterAll(async () => {
@@ -60,6 +77,70 @@ describe.skipIf(process.env.AERQYN_INTEGRATION !== '1')(
         } finally {
           await admin.$disconnect();
         }
+      }
+    });
+
+    it('reseeds without duplicates and persists salted password hashes', async () => {
+      const before = await database.user.findMany({
+        orderBy: { email: 'asc' },
+      });
+      await seedDemoUsers(database, seedEnvironment);
+      const after = await database.user.findMany({ orderBy: { email: 'asc' } });
+      expect(after).toHaveLength(2);
+      expect(after.map((user) => user.id)).toEqual(
+        before.map((user) => user.id),
+      );
+      for (const user of after) {
+        const password =
+          user.role === 'RESEARCHER'
+            ? seedEnvironment.DEMO_RESEARCHER_PASSWORD
+            : seedEnvironment.DEMO_OBSERVER_PASSWORD;
+        expect(user.passwordHash).not.toBe(password);
+        expect(await verifyPassword(password, user.passwordHash)).toBe(true);
+      }
+    });
+
+    it('allows Observer reads, blocks writes, and applies role changes to an existing token', async () => {
+      const login = await rawRequest(app).post('/auth/login').send({
+        email: 'observer@aerqyn.local',
+        password: seedEnvironment.DEMO_OBSERVER_PASSWORD,
+      });
+      expect(login.status).toBe(200);
+      const observer = missionClient(app, login.body.data.accessToken);
+      const created = await request(app)
+        .post('/missions')
+        .send({ name: 'RBAC check' });
+      expect(created.status).toBe(201);
+      const id = created.body.data.id;
+      expect((await observer.get('/missions')).status).toBe(200);
+      expect((await observer.get(`/missions/${id}`)).status).toBe(200);
+      expect(
+        (await observer.post('/missions').send({ name: 'Forbidden' })).status,
+      ).toBe(403);
+      expect(
+        (await observer.patch(`/missions/${id}`).send({ name: 'Forbidden' }))
+          .status,
+      ).toBe(403);
+      expect((await observer.delete(`/missions/${id}`)).status).toBe(403);
+      expect(await database.mission.count()).toBe(1);
+      expect(
+        (await database.mission.findUniqueOrThrow({ where: { id } })).name,
+      ).toBe('RBAC check');
+      const researcher = await database.user.findUniqueOrThrow({
+        where: { email: 'researcher@aerqyn.local' },
+      });
+      try {
+        await database.user.update({
+          where: { id: researcher.id },
+          data: { role: 'OBSERVER' },
+        });
+        expect((await request(app).delete(`/missions/${id}`)).status).toBe(403);
+      } finally {
+        await database.user.update({
+          where: { id: researcher.id },
+          data: { role: 'RESEARCHER' },
+        });
+        await database.mission.delete({ where: { id } });
       }
     });
 
@@ -113,7 +194,7 @@ describe.skipIf(process.env.AERQYN_INTEGRATION !== '1')(
       const secondConnection = createDatabase(secondUrl.href);
       try {
         // A new client proves this record is persisted beyond an Express app instance.
-        const separateApp = createApp(secondConnection);
+        const separateApp = createApp(secondConnection, testSecret);
         expect(
           (await request(separateApp).get(`/missions/${mission.id}`)).body.data
             .name,
