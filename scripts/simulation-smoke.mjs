@@ -61,7 +61,7 @@ try {
   const observer = await login('OBSERVER');
   for (let index = 0; index < 2; index++) {
     const result = await api('/missions', researcher, 'POST', {
-      name: `M3 smoke ${index}`,
+      name: `M5 smoke ${index}`,
       settings: { durationSeconds: 10, telemetryIntervalMs: 100 },
     });
     assert.equal(result.status, 201);
@@ -151,13 +151,37 @@ try {
     (await api(`/missions/${id}/telemetry`, observer)).data.status,
     'COMPLETED',
   );
+  assert.equal((await api(`/missions/${id}/replay`)).status, 401);
+  const replay = await api(`/missions/${id}/replay`, observer);
+  assert.equal(replay.status, 200);
+  assert.equal(replay.data.runs.length, 2);
+  assert(replay.data.frames.length >= 2);
+  assert.equal(replay.data.frames.at(-1).status, 'COMPLETED');
+  assert(
+    replay.data.frames.every(
+      (frame) => frame.startedAt === replay.data.runs[0],
+    ),
+  );
+  const oldReplay = await api(
+    `/missions/${id}/replay?startedAt=${encodeURIComponent(replay.data.runs[1])}`,
+    observer,
+  );
+  assert(oldReplay.data.frames.length >= 1);
+  assert(
+    oldReplay.data.frames.every(
+      (frame) => frame.startedAt === replay.data.runs[1],
+    ),
+  );
+  const page = await fetch(origin);
+  assert.equal(page.status, 200);
+  assert((await page.text()).includes('Virtual Flight Laboratory'));
   b.disconnect();
   await waitUntil(
     async () =>
       (await api(`/missions/${id}/viewers`, observer)).data.count === 1,
   );
   console.info(
-    'Live simulation/anomaly smoke passed: proxied WebSocket and polling clients, room isolation, RBAC, movement, cache, three anomaly types, durable alerts, stop/restart/completion, and viewer cleanup.',
+    'Live simulation/anomaly smoke passed: proxied WebSocket and polling clients, room isolation, RBAC, movement, cache, three anomaly types, durable alerts, stop/restart/completion, recorded runs, frontend HTML, and viewer cleanup.',
   );
 } finally {
   sockets.forEach((socket) => socket.disconnect());
