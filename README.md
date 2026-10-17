@@ -1,8 +1,8 @@
 # AERQYN
 
-A backend-focused UAV digital twin and cybersecurity simulation project. All future simulation data is synthetic and local; this project never controls physical drones.
+A backend-focused UAV digital twin and cybersecurity simulation project. All simulation data is synthetic and local; this project never controls physical drones.
 
-**M0 (Repository Foundation)**, **M1 (REST API and Database)**, and **M2 (Authentication and RBAC)** are implemented. [PROJECT.md](PROJECT.md) defines the product, [TASKS.md](TASKS.md) tracks milestones, and [AGENTS.md](AGENTS.md) defines development rules.
+**M0 through M3 (Drone Simulation and WebSockets)** are implemented. [PROJECT.md](PROJECT.md) defines the product, [TASKS.md](TASKS.md) tracks milestones, and [AGENTS.md](AGENTS.md) defines development rules.
 
 ## Repository
 
@@ -10,13 +10,14 @@ A backend-focused UAV digital twin and cybersecurity simulation project. All fut
 apps/
   web/       React + Vite + Tailwind placeholder
   api/       Express JWT/RBAC, mission CRUD, Zod and Prisma/PostgreSQL
-  worker/    Node process with GET /health; no jobs yet
+  worker/    Deterministic simulator with GET /health
+  simulation/ Shared telemetry schemas, Redis helpers and route calculations
 scripts/     Smoke verification for built processes
 compose.yaml PostgreSQL, Redis, RabbitMQ and three app services
 Dockerfile   Shared build with separate api, worker and web targets
 ```
 
-npm workspaces share one dependency lockfile. Root scripts run each workspace's TypeScript check and build. The shared TypeScript config enables strict checking; backend code uses Node ESM and the web uses Vite's bundler resolution. There is no shared package until there is actual shared application code.
+npm workspaces share one dependency lockfile. Root scripts build the shared simulation package first, then check/build the application workspaces. The shared TypeScript config enables strict checking; backend code uses Node ESM and the web uses Vite's bundler resolution. API and worker development hooks also build the shared package; rebuild/restart them after editing shared code.
 
 ## Prerequisites
 
@@ -53,7 +54,7 @@ npm run dev:web
 
 Open <http://localhost:5173>. The placeholder has no dashboard or application controls. API liveness is available at <http://localhost:3000/health>; worker liveness is at <http://localhost:3001/health> when running on the host. The web proxy makes <http://localhost:5173/api/health> reach the API without requiring CORS.
 
-Backend scripts load the root `.env`; Vite loads it using `envDir`. If changing `API_PORT`, also change `API_PROXY_TARGET` to match. Environment variables already set in the terminal take precedence. Set `DATABASE_URL` to match your database username, password, host port and database name; URL-encode credentials. The API validates this URL and `JWT_SECRET` at startup. Broker clients remain unimplemented. API development, type checking and builds automatically generate the Prisma client.
+Backend scripts load the root `.env`; Vite loads it using `envDir`. If changing `API_PORT`, also change `API_PROXY_TARGET` to match. Environment variables already set in the terminal take precedence. Set `DATABASE_URL` to match your database username, password, host port and database name; URL-encode credentials. Set `REDIS_URL` for both backend services (default `redis://127.0.0.1:6379`); change it too if changing `REDIS_PORT`. Compose uses internal database and Redis URLs. The API validates its database URL, Redis URL and `JWT_SECRET` at startup. RabbitMQ clients remain M4. API development, type checking and builds automatically generate the Prisma client.
 
 ## Full Docker setup
 
@@ -93,13 +94,13 @@ npm run test:integration
 npm run smoke
 ```
 
-`check` runs ESLint, formatting, strict TypeScript checks, Vitest/Supertest API tests and all three builds. `smoke` requires those builds, starts all three compiled processes on temporary ports, checks API and worker health, checks web HTML and the web-to-API proxy, verifies unauthenticated missions return 401 directly and through the proxy, rejects invalid backend port settings, then stops its child processes. It does not verify Docker or infrastructure.
+`check` runs ESLint, formatting, strict TypeScript checks, Vitest/Supertest tests and all four workspace builds. `smoke` requires those builds, starts all three application processes on temporary ports, checks API and worker health, checks web HTML and the web-to-API proxy, verifies unauthenticated missions return 401 directly and through the proxy, rejects invalid backend port settings, then stops its child processes. It does not verify Docker or infrastructure.
 
-`test:integration` requires PostgreSQL and the root `.env` database URL. It creates a randomly named `m2_test_*` schema, applies the real migrations, seeds both demo roles, checks reseeding and password hashes, exercises authenticated CRUD and Observer permissions through Supertest, verifies immediate role changes and persistence through a second connection, and drops only that test schema afterward. It never deletes development missions. The database user needs schema creation permission. The standard test run skips this database suite explicitly; validation and error tests run without PostgreSQL. An interrupted integration run may leave its test schema behind.
+`test:integration` requires PostgreSQL, Redis and the root `.env` database URL. It creates a randomly named `m2_test_*` schema, applies the real migrations, and verifies authentication, CRUD, roles, lifecycle races, actual worker ticks, Redis caching, Socket.IO room isolation and viewer cleanup. It drops that schema and its mission-specific Redis keys afterward; it never deletes development missions. The database user needs schema creation permission. The standard test run skips this integration suite explicitly. An interrupted run may leave test data behind.
 
-Use `npm run format` to apply formatting. Source API tests are checked separately from production emit through the test TypeScript config. Do not commit dependencies, `.env`, build output or coverage.
+Use `npm run format` to apply formatting. Backend and shared-package tests are checked separately from production emit through the test TypeScript config. Do not commit dependencies, `.env`, build output or coverage.
 
-Container readiness and application liveness are different checks: `/health` reports a running process even if PostgreSQL is unavailable. Database request failures return a generic JSON 500. Simulation, Socket.IO, broker jobs and the dashboard belong to later milestones. All mission endpoints require JWT authentication; mutations additionally require the Researcher role.
+Container readiness and application liveness are different checks: `/health` reports a running process even if infrastructure is unavailable. Database request failures return a generic JSON 500. RabbitMQ jobs and the dashboard belong to later milestones. All mission endpoints require JWT authentication; mutations additionally require the Researcher role.
 
 ## Mission API (M1)
 
@@ -121,7 +122,7 @@ $mission = Invoke-RestMethod -Method Post -Uri http://localhost:3000/missions -H
 Invoke-RestMethod -Uri "http://localhost:3000/missions/$($mission.data.id)" -Headers $headers
 ```
 
-Requests use JSON. `name` is trimmed and must contain 1–100 characters; `description` is trimmed, defaults to an empty string, and allows up to 2000 characters. Optional `settings` contains `durationSeconds` (integer 10–3600, default 300) and `telemetryIntervalMs` (integer 100–5000, default 1000). These settings are stored for future simulation work; M1 does not run drones. The initial fleet remains fixed at three in the project specification.
+Requests use JSON. `name` is trimmed and must contain 1–100 characters; `description` is trimmed, defaults to an empty string, and allows up to 2000 characters. Optional `settings` contains `durationSeconds` (integer 10–3600, default 300) and `telemetryIntervalMs` (integer 100–5000, default 1000). M3 uses these settings to run a fleet of exactly three drones.
 
 IDs are UUIDs, timestamps are UTC, and status is assigned `DRAFT` by the server. Neither create nor update accepts status, IDs or timestamps. PATCH requires at least one editable field. Omitted fields stay unchanged; supplying `settings` replaces that object and applies defaults to omitted settings keys. Unknown request fields are rejected. Lists accept `limit` 1–100 and `offset` 0–100000, and use ID as a tie breaker when creation times match.
 
@@ -129,7 +130,7 @@ Success responses use `{ "data": ... }`; lists also return `pagination` with `li
 
 The schema is in `apps/api/prisma/schema.prisma`; committed SQL migrations describe database changes, while the ignored generated client provides typed queries. For an intentional future schema change use `npm run db:dev --workspace @aerqyn/api -- --name descriptive_change`; review and commit the generated SQL. Use `db:migrate` to apply committed migrations without generating new ones.
 
-The intended later flow is worker → Redis pub/sub → API → Socket.IO clients, with PostgreSQL persistence and RabbitMQ analysis jobs. Those paths remain unimplemented until their respective milestones.
+The M3 live flow is worker → Redis cache/pub/sub → API → Socket.IO clients. RabbitMQ analysis jobs, telemetry snapshot persistence and replay remain later milestone work.
 
 ## Authentication and RBAC (M2)
 
@@ -161,4 +162,47 @@ The login flow is JSON -> Zod -> user lookup -> salted scrypt password check -> 
 
 `db:seed` explicitly upserts the two configured demo accounts, updating passwords and roles while preserving account IDs. Running it again is safe for missions and does not create duplicate emails. Changing a demo email creates a new account and leaves the previous email's account intact. Docker applies migrations at startup but does **not** automatically reseed credentials; use the explicit seed command above after first startup or when intentionally updating demo credentials.
 
-Limitations: local demo only; no registration, password-reset, user-management, refresh-token, or login-screen features. The login limiter uses process-local memory and resets on restart. The local web proxy shares its API-facing IP across browser clients, so those logins share a limit. A future public deployment would need a deliberate proxy and distributed rate-limit configuration. Health remains public process liveness only. M3 simulation and M5 frontend work have not started.
+Limitations: local demo only; no registration, password-reset, user-management, refresh-token, or login-screen features. The login limiter uses process-local memory and resets on restart. The local web proxy shares its API-facing IP across browser clients, so those logins share a limit. A future public deployment would need a deliberate proxy and distributed rate-limit configuration. Health remains public process liveness only. The M5 frontend has not started.
+
+## Drone simulation and live subscriptions (M3)
+
+| Method | Path                      | Permission and result                                |
+| ------ | ------------------------- | ---------------------------------------------------- |
+| POST   | `/missions/:id/start`     | Researcher; start or restart from the beginning; 200 |
+| POST   | `/missions/:id/stop`      | Researcher; stop a running mission; 200              |
+| GET    | `/missions/:id/telemetry` | Either role; latest cached frame or `null`           |
+| GET    | `/missions/:id/viewers`   | Either role; `{ data: { count: 2 } }`                |
+
+Commands accept an absent body or `{}` only. Starting an already running mission or stopping a non-running mission returns 409 `INVALID_STATE`. Missing missions return 404. Editing/deleting a running mission returns 409; stop it first. Starting assigns a new persisted `startedAt` value; stopped/completed missions can restart. Duration and telemetry interval use the existing mission settings. Reads return 503 `UNAVAILABLE` if Redis is not ready.
+
+The worker polls PostgreSQL every 100 ms without overlapping ticks. It locks each running mission row while generating and caching/publishing a frame, preventing concurrent lifecycle changes during that tick. Frame timestamps are quantized to the configured telemetry interval; identical frames are not republished. Three drones follow offset square routes in a synthetic 100-by-100 field at five field units per second. Battery decreases by 0.02 percentage points per second. Connections stay `CONNECTED` until M4 adds synthetic anomalies. At the duration boundary, the final frame has zero speed and `COMPLETED` status, and PostgreSQL records completion.
+
+Movement depends on the persisted start time, so restarting a worker resumes elapsed mission time. Missed frames are skipped; an outage longer than the remaining duration leads to completion when infrastructure returns. PostgreSQL is the source of mission status; Redis caches frames under `aerqyn:mission:<id>:state` for two hours and publishes them on `aerqyn:telemetry`. The API validates incoming frames and checks their mission/run identity before delivery. Reads return `null` before the first frame, after stop, or while only an earlier run is cached. Completed frames remain readable until expiration. This cache is not telemetry history.
+
+Use a Socket.IO v4 client with `auth: { token: accessToken }`. Connect to `http://localhost:5173` through the web proxy (default `/socket.io` path), or directly to port 3000 from a Node client. The proxy supports polling and WebSocket upgrades. The existing web page remains a placeholder; M3 adds no dashboard.
+
+```js
+import { io } from 'socket.io-client';
+
+const socket = io('http://localhost:5173', { auth: { token: accessToken } });
+socket.on('telemetry', (frame) => console.log(frame));
+socket.on('mission:viewers', ({ missionId, count }) =>
+  console.log(missionId, count),
+);
+socket.on('connect', async () => {
+  // Rejoin after reconnect. Login again and update socket.auth when the JWT expires.
+  const result = await socket
+    .timeout(5000)
+    .emitWithAck('mission:join', { missionId });
+  console.log(result); // { data: { missionId, telemetry } } or { error: { code, message } }
+});
+// await socket.timeout(5000).emitWithAck('mission:leave');
+```
+
+Each socket subscribes to one mission at a time. Joining another leaves the previous room; both roles may view any mission. A frame includes `missionId`, `startedAt`, `timestamp`, `elapsedMs`, `status`, and three `drones` with `id`, `x`, `y`, `speed`, `battery` and `connectionStatus`. Handshakes and joins verify JWTs/current users; each telemetry delivery rechecks authorization. Idle sockets are revalidated every 15 seconds and disconnected if authentication fails. Tokens expiring during a run cannot continue receiving telemetry.
+
+Viewer counts represent subscribed connections, so two tabs count as two viewers. Redis sorted sets store socket IDs with 45-second leases, refreshed every 15 seconds. Leave/disconnect removes entries; reads and presence updates prune expired leases, and the key expires after 60 seconds without refresh. A process crash can leave a viewer counted until its lease expires. Graceful cleanup is asynchronous. All synthetic telemetry remains local; no real-drone interface exists.
+
+To verify the running Docker stack (seed demo users first), run `npm run smoke:simulation`. It uses `.env` credentials without logging them, opens WebSocket and polling clients through the web proxy, verifies isolation, permissions, movement, cache, stop/restart/completion and presence, then deletes its temporary missions. It needs the running API, worker, web, PostgreSQL and Redis. `SIMULATION_ORIGIN` can override the web URL. Completed smoke cache entries expire naturally.
+
+Backend concepts: a **room** routes events only to subscribers of a mission; **pub/sub** carries live worker events between processes. Redis pub/sub is transient and can lose frames during disconnects; joining returns the latest cache and future frames resume after reconnect. PostgreSQL transactions serialize mission lifecycle changes, but PostgreSQL and Redis do not share an atomic transaction. This local MVP does not guarantee exactly-once delivery, replay, immediate lifecycle notifications, or production scaling. Run one API and one worker; coordinated multi-instance deployment and backpressure need further work.

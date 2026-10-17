@@ -68,11 +68,24 @@ Verification on 2026-10-17:
 
 ## M3 — Drone Simulation and WebSockets
 
-- [ ] Implement three-drone simulator
-- [ ] Create mission-specific Socket.IO rooms
-- [ ] Stream live telemetry
-- [ ] Cache current drone state in Redis
-- [ ] Track active viewers
+- [x] Implement three-drone simulator
+- [x] Create mission-specific Socket.IO rooms
+- [x] Stream live telemetry
+- [x] Cache current drone state in Redis
+- [x] Track active viewers
+
+Verification on 2026-10-17:
+
+- Added a shared strict TypeScript simulation workspace, Zod telemetry/settings contracts, and a migration persisting mission start times. Three synthetic drones follow deterministic offset square routes; telemetry honors the configured interval and duration, drains battery, and completes automatically. Worker restarts resume elapsed mission time without preserving in-memory state.
+- Added authenticated POST `/missions/:id/start` and `/stop`, restricted to Researchers. Conditional database writes prevent duplicate starts; running missions cannot be edited/deleted. Either role can read cached telemetry and active viewer counts. Stopped/restarted runs cannot expose earlier cached frames.
+- The worker polls PostgreSQL without overlapping ticks, uses row locks against concurrent lifecycle changes, caches the latest frame in Redis for two hours, and publishes telemetry through Redis pub/sub. The API validates frames and run identity before delivery. No RabbitMQ jobs, anomaly injection, dashboard, replay, snapshots or JSONL logging were added.
+- Added authenticated Socket.IO mission subscriptions, cached-state acknowledgements, one mission per socket, presence events and Redis viewer leases. Tokens/current users are checked at connection/join and before telemetry delivery; idle sockets are revalidated every 15 seconds. Presence is removed on leave/disconnect; expired leases cover process crashes. Viewer counts represent connections, not unique accounts.
+- `npm run check` passed: lint, formatting, strict application/test TypeScript checks, 74 tests, and all four workspace builds. Four integration tests are explicitly skipped by the default suite.
+- `npm run test:integration` passed all four tests against real PostgreSQL and Redis in an isolated random schema. Verified concurrent starts, lifecycle conflicts, worker-generated frames, interval deduplication, cache reads, two viewers receiving one mission, another room receiving nothing, switching rooms, disconnect/expired-presence cleanup, stale-run filtering, natural completion, and disconnecting a deleted user before another telemetry delivery. Test users, missions, Redis keys and schema were cleaned up.
+- `npm run smoke` passed compiled API/worker/web liveness, API proxy, protected routes and invalid-port rejection. `npm run smoke:simulation` passed against the actual Docker worker/API through the web proxy with WebSocket and polling clients: RBAC, movement, room isolation, cache, stop/restart/completion and presence cleanup. Temporary smoke missions were deleted; their caches expire naturally.
+- `docker compose config --quiet` and full Compose build/start passed; all six services became healthy and the API applied the run-timing migration. The final API rebuild/start passed with the socket-input validation guard; all six services remain healthy. Prisma migration status confirms all three migrations are applied and the database schema is up to date.
+- README documents endpoints, event payloads, data flow, testing and recovery behavior. Redis pub/sub is transient; PostgreSQL and Redis do not share an atomic transaction. Presence can remain counted for up to 45 seconds after a crash. Health remains liveness only. This implementation targets one local API and worker, without delivery replay or production scaling guarantees.
+- Implementation/test commits: `2eef10d` (engine/schema/workspace), `130e5f3` (API/worker/Redis/Socket.IO), and `6063977` (integration/live tests and socket validation). Completion documentation is saved in a separate local commit. No pushes or M4 work have been performed. M3 is complete; the Docker stack is left running. Wait for approval before starting M4.
 
 ## M4 — RabbitMQ and Anomaly Detection
 
