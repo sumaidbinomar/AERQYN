@@ -384,6 +384,21 @@ describe.skipIf(process.env.AERQYN_INTEGRATION !== '1')(
           queue,
           record,
         );
+        record.mockRejectedValueOnce(
+          new Error('Journal temporarily unavailable'),
+        );
+        await expect(pipeline.pump()).rejects.toThrow(
+          'Journal temporarily unavailable',
+        );
+        expect(
+          await database.anomalyJob.count({
+            where: { missionId: id, notifiedAt: null },
+          }),
+        ).toBe(3);
+        expect(await database.alert.count({ where: { missionId: id } })).toBe(
+          3,
+        );
+        record.mockClear();
         await pipeline.pump();
         await vi.waitFor(
           () => {

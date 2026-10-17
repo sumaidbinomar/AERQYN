@@ -107,7 +107,7 @@ try {
   const webUrl = `http://127.0.0.1:${webPort}`;
   assert.match(
     await (await waitFor(webUrl, web)).text(),
-    /<title>AERQYN<\/title>/,
+    /<title>AERQYN - Virtual Flight Laboratory<\/title>/,
   );
   const proxyResponse = await fetch(`${webUrl}/api/health`);
   assert.equal(proxyResponse.status, 200);
