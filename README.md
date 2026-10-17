@@ -2,14 +2,14 @@
 
 A backend-focused UAV digital twin and cybersecurity simulation project. All future simulation data is synthetic and local; this project never controls physical drones.
 
-Only **M0 — Repository Foundation** is implemented. [PROJECT.md](PROJECT.md) defines the product, [TASKS.md](TASKS.md) tracks milestones, and [AGENTS.md](AGENTS.md) defines development rules.
+**M0 — Repository Foundation** and **M1 — REST API and Database** are implemented. [PROJECT.md](PROJECT.md) defines the product, [TASKS.md](TASKS.md) tracks milestones, and [AGENTS.md](AGENTS.md) defines development rules.
 
 ## Repository
 
 ```text
 apps/
   web/       React + Vite + Tailwind placeholder
-  api/       Express process with GET /health
+  api/       Express mission CRUD, Zod validation and Prisma/PostgreSQL
   worker/    Node process with GET /health; no jobs yet
 scripts/     Smoke verification for built processes
 compose.yaml PostgreSQL, Redis, RabbitMQ and three app services
@@ -38,6 +38,8 @@ Start infrastructure:
 
 ```sh
 docker compose up -d --wait postgres redis rabbitmq
+npm run db:generate --workspace @aerqyn/api
+npm run db:migrate --workspace @aerqyn/api
 ```
 
 Run these in three separate terminals:
@@ -50,7 +52,7 @@ npm run dev:web
 
 Open <http://localhost:5173>. The placeholder has no dashboard or application controls. API liveness is available at <http://localhost:3000/health>; worker liveness is at <http://localhost:3001/health> when running on the host. The web proxy makes <http://localhost:5173/api/health> reach the API without requiring CORS.
 
-Backend scripts load the root `.env`; Vite loads it using `envDir`. If changing `API_PORT`, also change `API_PROXY_TARGET` to match. Environment variables already set in the terminal take precedence. M0 does not need database/broker connection URLs because it has no clients for those services yet.
+Backend scripts load the root `.env`; Vite loads it using `envDir`. If changing `API_PORT`, also change `API_PROXY_TARGET` to match. Environment variables already set in the terminal take precedence. Set `DATABASE_URL` to match your database username, password, host port and database name; URL-encode credentials. The API validates this URL at startup. Broker clients remain unimplemented. API development, type checking and builds automatically generate the Prisma client.
 
 ## Full Docker setup
 
@@ -75,7 +77,7 @@ The `frontend` network connects web and API. The separate `backend` bridge netwo
 
 RabbitMQ health probes run as the `rabbitmq` user through `gosu`. Running an early probe as root can create a root-owned Erlang cookie and prevent the broker from starting.
 
-Compose keeps internal app ports fixed and maps configurable host ports from `.env`. Container service names resolve within their networks, so the container web proxy uses `http://api:3000`, while host development uses `http://127.0.0.1:3000`. The browser always uses the web origin. At M0 this request flow is simply browser → web proxy → API `/health` → JSON response; infrastructure receives no application traffic yet.
+Compose keeps internal app ports fixed and maps configurable host ports from `.env`. Container service names resolve within their networks, so the container web proxy uses `http://api:3000`, while host development uses `http://127.0.0.1:3000`. The browser always uses the web origin. Mission requests flow through web `/api/missions` → Express → Zod validation → Prisma → PostgreSQL → JSON response. Compose supplies the API's internal database URL and runs committed migrations before starting it.
 
 Named volumes retain database, Redis AOF and broker data across container recreation. RabbitMQ has a stable hostname so its node identity remains stable. Changing credentials in `.env` does not automatically change accounts stored in existing volumes. `docker compose down` stops the stack and retains data. Avoid `down -v` unless deliberately discarding all local data.
 
@@ -85,13 +87,44 @@ Images build TypeScript and Vite assets once; run `docker compose up --build -d 
 
 ```sh
 npm run check
+npm run test:integration
 npm run smoke
 ```
 
 `check` runs ESLint, formatting, strict TypeScript checks, Vitest/Supertest API tests and all three builds. `smoke` requires those builds, starts all three compiled processes on temporary ports, checks API and worker health, checks web HTML and the web-to-API proxy, rejects invalid backend port settings, then stops its child processes. It does not verify Docker or infrastructure.
 
+`test:integration` requires PostgreSQL and the root `.env` database URL. It creates a randomly named `m1_test_*` schema, applies the real migrations, exercises CRUD through Supertest, verifies persistence through a second connection, and drops only that test schema afterward. It never deletes development missions. The database user needs schema creation permission. The standard test run skips this database suite explicitly; validation and error tests run without PostgreSQL. An interrupted integration run may leave its test schema behind.
+
 Use `npm run format` to apply formatting. Source API tests are checked separately from production emit through the test TypeScript config. Do not commit dependencies, `.env`, build output or coverage.
 
-Container readiness and application liveness are different checks: a running process can be healthy while its database is unavailable. Later milestones will add clients, connection failure handling and appropriate readiness checks. No Prisma schema, authentication, mission routes, simulation, Socket.IO, broker jobs or dashboard exists in M0.
+Container readiness and application liveness are different checks: `/health` reports a running process even if PostgreSQL is unavailable. Database request failures return a generic JSON 500. Authentication, simulation, Socket.IO, broker jobs and the dashboard belong to later milestones. Mission endpoints are currently unauthenticated and intended only for local development; JWT and backend RBAC are M2.
+
+## Mission API (M1)
+
+Use `http://localhost:3000/missions` directly or `http://localhost:5173/api/missions` through the web proxy.
+
+| Method | Path                          | Result                                     |
+| ------ | ----------------------------- | ------------------------------------------ |
+| POST   | `/missions`                   | Create a draft; 201 with `Location` header |
+| GET    | `/missions?limit=20&offset=0` | List newest first; 200                     |
+| GET    | `/missions/:id`               | Fetch one mission; 200                     |
+| PATCH  | `/missions/:id`               | Update provided fields; 200                |
+| DELETE | `/missions/:id`               | Delete a mission; 204 with no body         |
+
+Create example in PowerShell:
+
+```powershell
+$body = @{ name = 'Local flight'; description = 'Synthetic route' } | ConvertTo-Json
+$mission = Invoke-RestMethod -Method Post -Uri http://localhost:3000/missions -ContentType application/json -Body $body
+Invoke-RestMethod -Uri "http://localhost:3000/missions/$($mission.data.id)"
+```
+
+Requests use JSON. `name` is trimmed and must contain 1–100 characters; `description` is trimmed, defaults to an empty string, and allows up to 2000 characters. Optional `settings` contains `durationSeconds` (integer 10–3600, default 300) and `telemetryIntervalMs` (integer 100–5000, default 1000). These settings are stored for future simulation work; M1 does not run drones. The initial fleet remains fixed at three in the project specification.
+
+IDs are UUIDs, timestamps are UTC, and status is assigned `DRAFT` by the server. Neither create nor update accepts status, IDs or timestamps. PATCH requires at least one editable field. Omitted fields stay unchanged; supplying `settings` replaces that object and applies defaults to omitted settings keys. Unknown request fields are rejected. Lists accept `limit` 1–100 and `offset` 0–100000, and use ID as a tie breaker when creation times match.
+
+Success responses use `{ "data": ... }`; lists also return `pagination` with `limit` and `offset`. Errors use `{ "error": { "code": "...", "message": "..." } }`: invalid input/UUIDs return 400, missing missions or routes return 404, bodies over 16 KB return 413, and unexpected failures return 500 without internal details. Offset pagination can shift when missions are added or deleted between requests.
+
+The schema is in `apps/api/prisma/schema.prisma`; committed SQL migrations describe database changes, while the ignored generated client provides typed queries. For an intentional future schema change use `npm run db:dev --workspace @aerqyn/api -- --name descriptive_change`; review and commit the generated SQL. Use `db:migrate` to apply committed migrations without generating new ones.
 
 The intended later flow is worker → Redis pub/sub → API → Socket.IO clients, with PostgreSQL persistence and RabbitMQ analysis jobs. Those paths remain unimplemented until their respective milestones.

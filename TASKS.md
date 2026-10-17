@@ -25,12 +25,26 @@ Verification on 2026-10-17:
 
 ## M1 — REST API and Database
 
-- [ ] Configure Express and Prisma
-- [ ] Create PostgreSQL schema
-- [ ] Implement mission CRUD
-- [ ] Add Zod validation
-- [ ] Add consistent error handling
-- [ ] Write CRUD endpoint tests
+- [x] Configure Express and Prisma
+- [x] Create PostgreSQL schema
+- [x] Implement mission CRUD
+- [x] Add Zod validation
+- [x] Add consistent error handling
+- [x] Write CRUD endpoint tests
+
+Verification on 2026-10-17:
+
+- Added Prisma 7 with the PostgreSQL driver adapter, a committed mission migration, generated-client scripts, validated database configuration, and graceful client shutdown. The ignored local `.env` now contains a matching host database URL; credentials were not printed or committed.
+- Implemented POST/GET/PATCH/DELETE `/missions`, bounded offset pagination, UUID checks, strict Zod request schemas, server-assigned draft status, and consistent JSON errors including malformed/oversized bodies and missing missions.
+- `npm run check` passed: lint, formatting, strict application/test TypeScript checks, 31 tests, and all three builds. The one PostgreSQL integration test is explicitly skipped in the default suite.
+- `npm run test:integration` passed against real PostgreSQL: migrations applied in a random isolated schema; CRUD, defaults, pagination, persistence through a second connection, and missing-record behavior verified; test schema removed afterward.
+- Applied the committed migration to the development database. Prisma migration diff reported no difference between PostgreSQL and the schema.
+- `npm run smoke` passed for the compiled API, worker, frontend preview, proxy, and invalid-port rejection. The API development generation hook and final formatting check passed.
+- Docker Desktop initially had a stalled Linux engine; restarting only its WSL distribution and Docker Desktop restored access without removing volumes.
+- README documents host/Docker setup, API contracts, settings replacement on PATCH, testing, and limitations. Authentication/RBAC remain M2; simulation remains M3; `/health` remains process liveness only.
+- `docker compose config --quiet` and the full Compose build/start passed; all six services became healthy. The container API applied migration deployment successfully. Live CRUD and validation passed through the web proxy and direct API; the verification mission was deleted afterward.
+- The final API image rebuild/start passed after the development and shutdown adjustments. Confirmed Node runs directly under Docker's init process, all six containers are healthy, and final API liveness and database-backed requests work through the web proxy.
+- M1 is complete. Changes are saved in small local Conventional Commits as authorized, ending with `docs: record M1 completion and mission API workflow`. No pushes or M2 work have been performed. The local Docker stack is left running; wait for approval before starting M2.
 
 ## M2 — Authentication and RBAC
 
