@@ -1,0 +1,15 @@
+.env
+.env.*
+.cache/
+.npm-cache/
+.git/
+.agents/
+.codex/
+.aws/
+**/node_modules/
+**/dist/
+apps/api/src/generated/
+docs/media/
+coverage/
+*.log
+*.jsonl

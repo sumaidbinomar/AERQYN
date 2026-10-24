@@ -1,6 +1,7 @@
 {
-  "buildCommand": "npm run build --workspace @aerqyn/simulation && npm run build --workspace @aerqyn/web",
-  "installCommand": "npm ci --include=dev",
+  "framework": "vite",
+  "buildCommand": "npm run build --workspace @aerqyn/simulation && npm run build --workspace @aerqyn/web -- --mode demo",
+  "installCommand": "npm ci --include=dev --workspaces --include-workspace-root",
   "outputDirectory": "apps/web/dist",
   "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
 }

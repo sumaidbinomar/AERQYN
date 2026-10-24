@@ -1,0 +1,7 @@
+{
+  "framework": "vite",
+  "installCommand": "cd ../.. && npm ci --include=dev --workspaces --include-workspace-root",
+  "buildCommand": "cd ../.. && npm run build --workspace @aerqyn/simulation && npm run build --workspace @aerqyn/web -- --mode demo",
+  "outputDirectory": "dist",
+  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
+}

@@ -39,7 +39,7 @@ export default function Demo() {
   const drones = initial.map((drone, index) => ({
     ...drone,
     x: 8 + ((drone.x + tick * (index + 2)) % 82),
-    y: 12 + ((drone.y + tick * (index % 2 ? -1 : 1)) % 74),
+    y: 12 + ((((drone.y + tick * (index % 2 ? -1 : 1)) % 74) + 74) % 74),
     battery: Math.max(12, drone.battery - Math.floor(tick / 30)),
   }));
   return (
@@ -54,7 +54,10 @@ export default function Demo() {
         <div className="demo-live">
           <i /> SYNTHETIC ENVIRONMENT
         </div>
-        <a href="https://github.com/" className="demo-github">
+        <a
+          href="https://github.com/sumaidbinomar/AERQYN"
+          className="demo-github"
+        >
           Project on GitHub ↗
         </a>
       </header>
@@ -259,7 +262,9 @@ export default function Demo() {
               This dashboard uses generated sample telemetry to demonstrate
               AERQYN’s mission-control interface.
             </p>
-            <a href="https://github.com/">Explore the source code ↗</a>
+            <a href="https://github.com/sumaidbinomar/AERQYN">
+              Explore the source code ↗
+            </a>
           </div>
         </aside>
       </section>

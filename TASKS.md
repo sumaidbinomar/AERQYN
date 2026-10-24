@@ -1,5 +1,30 @@
 # AERQYN — Development Milestones
 
+## Public dashboard hosting repair — 2026-10-24
+
+- [x] Configure Vercel for both the repository root and the imported `apps/web` root.
+- [x] Explicitly install development dependencies and the workspace root so TypeScript is available to the shared build.
+- [x] Build in demo mode so the public homepage shows the sample dashboard immediately.
+- [x] Correct preview GitHub links and keep animated aircraft inside the field after route wraparound.
+- [x] Deploy and verify the public preview at <https://aerqyn.vercel.app>.
+
+The existing Vercel project uses `apps/web` as its root. Its new config installs
+from the repository root with `--include=dev --workspaces --include-workspace-root`,
+builds the simulation package, then builds the web app in `demo` mode. The root
+config supports importing the whole repository too. CLI uploads exclude local
+environment files, caches and generated files. The preview uses sample data in
+the browser; the API, worker and infrastructure are not hosted.
+
+Verification: `npm run check` passed lint, formatting, strict type checks,
+96 tests and all workspace builds; five infrastructure tests were skipped.
+Vercel production deployment `dpl_HUdP1isbQe8TPHQk9AyErdJFx9qs` reached Ready.
+Public Edge browser checks passed for HTTP 200 at `/` and `/demo`, sample mission
+rendering, aircraft movement, repository links, a 390px viewport without horizontal
+overflow, and zero page exceptions or backend requests. Desktop/mobile screenshots
+were visually reviewed and are saved only in ignored `.cache` files. Vercel's
+install reported two dependency audit findings; this repair changes no dependency
+versions. Live backend features remain available only through the local setup.
+
 ## Anomaly visibility repair — 2026-10-24
 
 - [x] Investigate injected samples disappearing from the dashboard.

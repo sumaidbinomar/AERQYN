@@ -27,6 +27,9 @@ export default defineConfig(({ mode }) => {
 
   return {
     envDir,
+    ...(mode === 'demo'
+      ? { define: { 'import.meta.env.VITE_DEMO_MODE': JSON.stringify('true') } }
+      : {}),
     plugins: [react(), tailwindcss()],
     server: { port: env.WEB_PORT, proxy },
     preview: { proxy },

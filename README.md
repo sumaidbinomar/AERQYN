@@ -11,6 +11,8 @@ asynchronous anomaly detection, and recorded flight replay.
 
 [Get started](#getting-started) &middot; [Explore the architecture](#architecture) &middot; [View the demo](docs/DEMO.md) &middot; [API reference](#mission-api-m1) &middot; [Security review](docs/SECURITY.md)
 
+**[Open the public dashboard preview](https://aerqyn.vercel.app)** — sample data, no login required.
+
 </div>
 
 ![AERQYN mission-control dashboard with synthetic flight telemetry](docs/media/dashboard.png)
@@ -114,10 +116,13 @@ npm workspaces share one dependency lockfile. Root scripts build the shared simu
 
 The backend-free interface preview lives at `/demo` and uses generated sample
 telemetry. It does not offer login, mission controls, live backend data, or
-persistent changes. To publish it as a static Vercel site, import this GitHub
-repository in Vercel using the repository root, keep the included build/output
-settings, and use the deployment URL with `/demo` appended. This preview does
-not deploy the API or infrastructure.
+persistent changes. Import the `apps/web` project in Vercel and keep its included
+build/output settings. Both `apps/web/vercel.json` and the repository-root config
+explicitly install development dependencies, including the workspace root's
+TypeScript compiler, then build the shared package and the dashboard in `demo`
+mode. Either root directory is supported. The hosted homepage opens the preview
+directly; `/demo` also works. Local development continues to open the full app.
+This preview does not deploy the API or infrastructure.
 
 Choose the setup that matches your workflow. Both use the root `.env` file and explicitly seeded demo accounts.
 
