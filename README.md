@@ -110,6 +110,15 @@ npm workspaces share one dependency lockfile. Root scripts build the shared simu
 
 ## Getting started
 
+### Public visual preview
+
+The backend-free interface preview lives at `/demo` and uses generated sample
+telemetry. It does not offer login, mission controls, live backend data, or
+persistent changes. To publish it as a static Vercel site, import this GitHub
+repository in Vercel using the repository root, keep the included build/output
+settings, and use the deployment URL with `/demo` appended. This preview does
+not deploy the API or infrastructure.
+
 Choose the setup that matches your workflow. Both use the root `.env` file and explicitly seeded demo accounts.
 
 | Workflow                                | Runs on the host                           | Runs in Docker                  | Best suited to                  |

@@ -18,6 +18,7 @@ import {
   type Telemetry,
 } from './api';
 import { useMissionStream } from './useMissionStream';
+import Demo from './Demo';
 
 const time = (value: string) => new Date(value).toLocaleTimeString();
 const label = (value: string) => value.replaceAll('_', ' ').toLowerCase();
@@ -34,6 +35,15 @@ function Brand() {
 }
 
 export default function App() {
+  if (
+    import.meta.env.VITE_DEMO_MODE === 'true' ||
+    window.location.pathname === '/demo'
+  )
+    return <Demo />;
+  return <AppShell />;
+}
+
+function AppShell() {
   const [session, setSession] = useState<Session | null>(null);
   const [notice, setNotice] = useState('');
   const logout = useCallback(() => {

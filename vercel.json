@@ -1,0 +1,5 @@
+{
+  "buildCommand": "npm run build --workspace @aerqyn/simulation && npm run build --workspace @aerqyn/web",
+  "outputDirectory": "apps/web/dist",
+  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
+}
