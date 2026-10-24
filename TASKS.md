@@ -1,5 +1,18 @@
 # AERQYN — Development Milestones
 
+## Anomaly visibility repair — 2026-10-24
+
+- [x] Investigate injected samples disappearing from the dashboard.
+- [x] Deliver analyzed anomaly samples separately from ordered live telemetry.
+- [x] Show an eight-second labeled sample preview in the field and telemetry cards, then resume live telemetry automatically.
+- [x] Cover delayed frames, mission/run boundaries, replay exclusion, both roles and room isolation.
+
+The API captures an altered measurement when accepting an injection, but asynchronous analysis can publish it after newer normal frames. The browser correctly rejects older live frames, which also hid these anomalies; accepted samples could disappear on the very next tick. The worker now additionally publishes `aerqyn:anomaly-samples`; the API validates/authenticates it and delivers `anomaly:sample` to mission viewers. The browser keeps the sample preview separate from the advancing live frame. Existing telemetry events, deterministic simulation, cache and replay behavior remain compatible. No physical drone interfaces or new dependencies were added.
+
+Verification: 96 default tests passed (five infrastructure tests explicitly skipped there); all five isolated PostgreSQL/Redis/RabbitMQ integration tests passed separately. The new integration assertion initially assumed identical delivery order across subscriptions; it now verifies matching sample contents regardless of asynchronous delivery order. The live simulation smoke test passed, including RBAC, room isolation, anomalies, durable alerts, replay and lifecycle handling. Local Edge browser automation verified all three visible effects at a 100 ms interval, preview persistence, automatic return to live and three timeline alerts; screenshots were visually inspected. Temporary verification missions were deleted. README documents the event, data flow, preview limitations and optional browser verification command.
+
+The preview shows one altered sample for eight seconds, rather than changing flight physics permanently. A newer processed injection replaces it. Preview delivery is transient; persisted alert history remains the durable record. Changes are saved in a local Conventional Commit; no push is authorized or performed.
+
 ## M0 — Repository Foundation
 
 - [x] Initialize Git repository

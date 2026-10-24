@@ -18,10 +18,16 @@ export function useMissionStream(
   retry: number,
 ) {
   const [frame, setFrame] = useState<Telemetry | null>(null);
+  const [anomalySample, setAnomalySample] = useState<Telemetry | null>(null);
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [viewers, setViewers] = useState(0);
   const [connection, setConnection] = useState('Connecting');
   const [error, setError] = useState('');
+  useEffect(() => {
+    if (!anomalySample) return;
+    const timer = setTimeout(() => setAnomalySample(null), 8000);
+    return () => clearTimeout(timer);
+  }, [anomalySample]);
   useEffect(() => {
     let active = true;
     const socket = io({ auth: { token }, reconnectionDelayMax: 5000 });
@@ -71,6 +77,11 @@ export function useMissionStream(
         );
     });
     socket.on('telemetry', receive);
+    socket.on('anomaly:sample', (raw: unknown) => {
+      const parsed = telemetrySchema.safeParse(raw);
+      if (!active || !parsed.success || parsed.data.missionId !== id) return;
+      setAnomalySample(parsed.data);
+    });
     socket.on('alert', (raw: unknown) => {
       const parsed = alertSchema.safeParse(raw);
       if (active && parsed.success && parsed.data.missionId === id)
@@ -99,5 +110,5 @@ export function useMissionStream(
       socket.disconnect();
     };
   }, [id, token, onUnauthorized, retry]);
-  return { frame, alerts, viewers, connection, error };
+  return { frame, anomalySample, alerts, viewers, connection, error };
 }

@@ -12,7 +12,11 @@ import type { PrismaClient } from './generated/prisma/client.js';
 import { createAuth } from './auth.js';
 import { ApiError } from './errors.js';
 import { latestTelemetry } from './simulation.js';
-import { alertChannel, alertSchema } from '@aerqyn/simulation/anomalies';
+import {
+  alertChannel,
+  alertSchema,
+  anomalySampleChannel,
+} from '@aerqyn/simulation/anomalies';
 
 const joinSchema = z.strictObject({ missionId: z.uuid() });
 type Reply = (result: unknown) => void;
@@ -134,13 +138,13 @@ export function createRealtime(
   });
   async function receive(
     raw: string,
-    event: 'telemetry' | 'alert' = 'telemetry',
+    event: 'telemetry' | 'alert' | 'anomaly:sample' = 'telemetry',
   ) {
     try {
       const state =
-        event === 'telemetry'
-          ? telemetrySchema.parse(JSON.parse(raw))
-          : alertSchema.parse(JSON.parse(raw));
+        event === 'alert'
+          ? alertSchema.parse(JSON.parse(raw))
+          : telemetrySchema.parse(JSON.parse(raw));
       const mission = await database.mission.findUnique({
         where: { id: state.missionId },
       });
@@ -172,6 +176,9 @@ export function createRealtime(
       });
       await subscriber.subscribe(alertChannel, (raw) => {
         void receive(raw, 'alert');
+      });
+      await subscriber.subscribe(anomalySampleChannel, (raw) => {
+        void receive(raw, 'anomaly:sample');
       });
     },
     close: async () => {

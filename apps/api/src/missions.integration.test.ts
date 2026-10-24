@@ -314,6 +314,7 @@ describe.skipIf(process.env.AERQYN_INTEGRATION !== '1')(
           200,
         );
         const received: Alert[][] = [[], [], []];
+        const previews: Telemetry[][] = [[], [], []];
         const frames: Telemetry[] = [];
         for (const [index, accessToken] of [
           token,
@@ -331,6 +332,9 @@ describe.skipIf(process.env.AERQYN_INTEGRATION !== '1')(
             socket.once('connect_error', reject);
           });
           socket.on('alert', (event: Alert) => received[index]!.push(event));
+          socket.on('anomaly:sample', (event: Telemetry) =>
+            previews[index]!.push(event),
+          );
           socket.on('telemetry', (event: Telemetry) => {
             if (index === 0) frames.push(event);
           });
@@ -406,10 +410,16 @@ describe.skipIf(process.env.AERQYN_INTEGRATION !== '1')(
             expect(received[1]).toHaveLength(3);
             // Alerts and telemetry use separate Redis subscriptions; wait for both.
             expect(frames).toHaveLength(3);
+            expect(previews[0]).toHaveLength(3);
+            expect(previews[1]).toHaveLength(3);
           },
           { timeout: 5000 },
         );
         expect(received[2]).toHaveLength(0);
+        expect(previews[2]).toHaveLength(0);
+        // Separate subscriptions and per-delivery auth checks may finish in a different order.
+        expect(previews[0]).toEqual(expect.arrayContaining(frames));
+        expect(previews[1]).toEqual(expect.arrayContaining(frames));
         expect(record.mock.calls).toHaveLength(6);
         expect(frames).toHaveLength(3);
         expect(

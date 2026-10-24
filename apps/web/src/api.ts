@@ -70,7 +70,7 @@ export async function request<T>(
   return z.object({ data: schema }).parse(payload).data;
 }
 
-// Late anomaly samples must not move the live clock backwards or revive an older run.
+// Keep live telemetry ordered; processed anomaly previews have a separate lifetime.
 export function acceptFrame(
   previous: Telemetry | null,
   incoming: Telemetry,
@@ -84,6 +84,20 @@ export function acceptFrame(
     return incoming;
   return previous;
 }
+
+export function visibleAnomalySample(
+  sample: Telemetry | null,
+  mission: Pick<Mission, 'id' | 'startedAt' | 'status'>,
+  replayMode: boolean,
+): Telemetry | null {
+  return !replayMode &&
+    mission.status === 'RUNNING' &&
+    sample?.missionId === mission.id &&
+    sample.startedAt === mission.startedAt
+    ? sample
+    : null;
+}
+
 export function mergeAlerts(previous: Alert[], incoming: Alert[]): Alert[] {
   return [
     ...new Map(

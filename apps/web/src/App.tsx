@@ -12,6 +12,7 @@ import {
   replaySchema,
   request,
   sessionSchema,
+  visibleAnomalySample,
   type Mission,
   type Session,
   type Telemetry,
@@ -475,12 +476,8 @@ function MissionView({
   edit: () => void;
 }) {
   const [retry, setRetry] = useState(0);
-  const { frame, alerts, viewers, connection, error } = useMissionStream(
-    mission.id,
-    session.accessToken,
-    logout,
-    retry,
-  );
+  const { frame, anomalySample, alerts, viewers, connection, error } =
+    useMissionStream(mission.id, session.accessToken, logout, retry);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
   const [replay, setReplay] = useState<z.infer<typeof replaySchema> | null>(
@@ -492,7 +489,10 @@ function MissionView({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const researcher = session.user.role === 'RESEARCHER';
   const currentFrame = frame?.startedAt === mission.startedAt ? frame : null;
-  const shown = replayMode ? (replay?.frames[cursor] ?? null) : currentFrame;
+  const preview = visibleAnomalySample(anomalySample, mission, replayMode);
+  const shown = replayMode
+    ? (replay?.frames[cursor] ?? null)
+    : (preview ?? currentFrame);
   useEffect(() => {
     if (!playing || !replay) return;
     const current = replay.frames[cursor];
@@ -633,7 +633,11 @@ function MissionView({
               <h2>Digital twin</h2>
             </div>
             <span className={`live-tag ${replayMode ? 'replay-tag' : ''}`}>
-              {replayMode ? '◷ RECORDED' : `● ${connection.toUpperCase()}`}
+              {replayMode
+                ? '◷ RECORDED'
+                : preview
+                  ? 'ANOMALY PREVIEW'
+                  : `● ${connection.toUpperCase()}`}
             </span>
           </div>
           <Field
@@ -641,6 +645,12 @@ function MissionView({
             replay={replayMode}
             interval={mission.settings.telemetryIntervalMs}
           />
+          {preview && (
+            <p className="notice" role="status">
+              Injected sample preview (8 seconds). Live telemetry continues in
+              the background; the field and cards return to live automatically.
+            </p>
+          )}
           <div className="field-footer">
             <span>2D CARTESIAN FIELD · SYNTHETIC UNITS</span>
             <span>
@@ -723,8 +733,8 @@ function MissionView({
           <p className="eyebrow">RESILIENCE TESTING</p>
           <h2>Introduce an anomaly</h2>
           <p className="muted">
-            A single synthetic sample. Watch the analysis arrive in the
-            timeline.
+            Inject one synthetic sample. After worker analysis, the field and
+            cards preview its effect for 8 seconds. Alerts stay in the timeline.
           </p>
           <form
             onSubmit={(event) => {
@@ -822,7 +832,11 @@ function MissionView({
                   <span>X {drone?.x.toFixed(1) ?? '—'}</span>
                   <span>Y {drone?.y.toFixed(1) ?? '—'}</span>
                   <span>
-                    {replayMode ? 'Recorded sample' : 'Latest sample'}
+                    {replayMode
+                      ? 'Recorded sample'
+                      : preview
+                        ? 'Injected sample'
+                        : 'Latest sample'}
                   </span>
                 </div>
               </article>

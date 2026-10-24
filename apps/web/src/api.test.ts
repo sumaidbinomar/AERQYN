@@ -5,6 +5,7 @@ import {
   mergeAlerts,
   request,
   HttpError,
+  visibleAnomalySample,
   type Alert,
 } from './api';
 import { z } from 'zod';
@@ -14,6 +15,33 @@ const frame = (ms: number) =>
   simulate(id, start, settingsSchema.parse({}), new Date(+start + ms));
 afterEach(() => vi.unstubAllGlobals());
 describe('browser data boundaries', () => {
+  it('shows delayed anomaly samples separately while keeping live telemetry ordered', () => {
+    const latest = frame(5000);
+    const sample = frame(1000);
+    sample.drones[0]!.x += 100;
+    const mission = {
+      id,
+      startedAt: start.toISOString(),
+      status: 'RUNNING' as const,
+    };
+    expect(acceptFrame(latest, sample)).toBe(latest);
+    expect(visibleAnomalySample(sample, mission, false)).toBe(sample);
+    expect(visibleAnomalySample(null, mission, false)).toBeNull();
+    expect(visibleAnomalySample(sample, mission, true)).toBeNull();
+    expect(
+      visibleAnomalySample(sample, { ...mission, status: 'STOPPED' }, false),
+    ).toBeNull();
+    expect(
+      visibleAnomalySample(
+        sample,
+        { ...mission, startedAt: '2026-10-17T00:01:00.000Z' },
+        false,
+      ),
+    ).toBeNull();
+    expect(
+      visibleAnomalySample(sample, { ...mission, id: 'other' }, false),
+    ).toBeNull();
+  });
   it('ignores late frames and old runs but accepts equal-time anomaly samples', () => {
     const latest = frame(2000);
     expect(acceptFrame(latest, frame(1000))).toBe(latest);

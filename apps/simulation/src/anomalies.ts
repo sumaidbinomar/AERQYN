@@ -20,6 +20,7 @@ export const alertSchema = z.strictObject({
 });
 export type Alert = z.infer<typeof alertSchema>;
 export const alertChannel = 'aerqyn:alerts';
+export const anomalySampleChannel = 'aerqyn:anomaly-samples';
 
 // Each command affects one synthetic sample. The next normal tick restores the route.
 export function injectAnomaly(

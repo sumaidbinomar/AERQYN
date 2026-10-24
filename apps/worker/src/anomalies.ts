@@ -6,6 +6,7 @@ import { telemetryChannel, type Redis } from '@aerqyn/simulation';
 import {
   alertChannel,
   alertSchema,
+  anomalySampleChannel,
   analysisSchema,
   detectAnomalies,
 } from '@aerqyn/simulation/anomalies';
@@ -121,6 +122,7 @@ export async function notifyAlerts(
       const { observed } = analysisSchema.parse(job.payload);
       await record({ type: 'anomaly.sample', data: observed });
       await redis.publish(telemetryChannel, JSON.stringify(observed));
+      await redis.publish(anomalySampleChannel, JSON.stringify(observed));
       const alerts = await pool.query<{
         id: string;
         missionId: string;
