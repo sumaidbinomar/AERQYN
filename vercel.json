@@ -1,5 +1,6 @@
 {
   "buildCommand": "npm run build --workspace @aerqyn/simulation && npm run build --workspace @aerqyn/web",
+  "installCommand": "npm ci --include=dev",
   "outputDirectory": "apps/web/dist",
   "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
 }
